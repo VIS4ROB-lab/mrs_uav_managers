@@ -385,8 +385,7 @@ bool RemoteControlTest::setGotoReference() {
   if (uav_state->velocity.linear.x > 0.8 * constraints->horizontal_speed) {
     return true;
   } else {
-    RCLCPP_ERROR(node_->get_logger(), "velocity not reached, %.2f, %.2f, %.2f", uav_state->velocity.linear.x, uav_state->velocity.linear.y,
-                 uav_state->velocity.linear.z);
+    RCLCPP_ERROR(node_->get_logger(), "velocity not reached, %.2f, %.2f, %.2f", uav_state->velocity.linear.x, uav_state->velocity.linear.y, uav_state->velocity.linear.z);
     return false;
   }
 }

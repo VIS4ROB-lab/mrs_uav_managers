@@ -311,7 +311,7 @@ bool Tester::test(void) {
 
   deactivate();
 
-  sleep(5.0);
+  sleep(2.0);
 
   if (uh_->isFlyingNormally()) {
     return true;
@@ -321,7 +321,7 @@ bool Tester::test(void) {
   }
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
 
   rclcpp::init(argc, argv);
 

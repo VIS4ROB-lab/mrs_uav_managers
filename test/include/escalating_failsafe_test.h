@@ -141,14 +141,13 @@ bool EscalatingFailsafeTest::test() {
 
   // | -------------------- wait few seconds -------------------- |
 
-  sleep(2.0);
+  sleep(1.5);
 
   // | ---------------- check if we are elanding ---------------- |
 
   auto uav_state = uh_->sh_uav_state_.getMsg();
 
-  if (!(!uh_->isFlyingNormally() && uh_->getActiveController() == "EmergencyController" && uh_->getActiveTracker() == "LandoffTracker" &&
-        uav_state->velocity.linear.z < -0.3)) {
+  if (!(!uh_->isFlyingNormally() && uh_->getActiveController() == "EmergencyController" && uh_->getActiveTracker() == "LandoffTracker" && uav_state->velocity.linear.z < -0.3)) {
     RCLCPP_ERROR(node_->get_logger(), "we are not elanding");
     return false;
   }
@@ -189,7 +188,7 @@ bool EscalatingFailsafeTest::test() {
 
   // | ------------ wait for the failsafe to trigger ------------ |
 
-  sleep(2.0);
+  sleep(1.5);
 
   if (!(!uh_->isFlyingNormally() && uh_->getActiveController() == "FailsafeController" && uav_state->velocity.linear.z < -0.3)) {
     RCLCPP_ERROR(node_->get_logger(), "we are not in failsafe");

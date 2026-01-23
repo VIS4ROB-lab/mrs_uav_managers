@@ -41,8 +41,7 @@ public:
    *
    * @return true if success
    */
-  virtual bool initialize(const rclcpp::Node::SharedPtr &node, std::shared_ptr<mrs_uav_managers::control_manager::CommonHandlers_t> common_handlers,
-                          std::shared_ptr<mrs_uav_managers::control_manager::PrivateHandlers_t> private_handlers) = 0;
+  virtual bool initialize(const rclcpp::Node::SharedPtr &node, std::shared_ptr<mrs_uav_managers::control_manager::CommonHandlers_t> common_handlers, std::shared_ptr<mrs_uav_managers::control_manager::PrivateHandlers_t> private_handlers) = 0;
 
   virtual void destroy(void) = 0;
 
@@ -86,8 +85,7 @@ public:
    *
    * @return the new reference for the controllers
    */
-  virtual std::optional<mrs_msgs::msg::TrackerCommand> update(const mrs_msgs::msg::UavState   &uav_state,
-                                                              const Controller::ControlOutput &last_control_output) = 0;
+  virtual std::optional<mrs_msgs::msg::TrackerCommand> update(const mrs_msgs::msg::UavState &uav_state, const Controller::ControlOutput &last_control_output) = 0;
 
   /**
    * @brief A request for the tracker's status.
@@ -112,8 +110,7 @@ public:
    *
    * @return a service response
    */
-  virtual const std::shared_ptr<mrs_msgs::srv::VelocityReferenceSrv::Response>
-  setVelocityReference(const std::shared_ptr<mrs_msgs::srv::VelocityReferenceSrv::Request> &request) = 0;
+  virtual const std::shared_ptr<mrs_msgs::srv::VelocityReferenceSrv::Response> setVelocityReference(const std::shared_ptr<mrs_msgs::srv::VelocityReferenceSrv::Request> &request) = 0;
 
   /**
    * @brief Request for a flight along a given trajectory
@@ -122,8 +119,7 @@ public:
    *
    * @return a service response
    */
-  virtual const std::shared_ptr<mrs_msgs::srv::TrajectoryReferenceSrv::Response>
-  setTrajectoryReference(const std::shared_ptr<mrs_msgs::srv::TrajectoryReferenceSrv::Request> &request) = 0;
+  virtual const std::shared_ptr<mrs_msgs::srv::TrajectoryReferenceSrv::Response> setTrajectoryReference(const std::shared_ptr<mrs_msgs::srv::TrajectoryReferenceSrv::Request> &request) = 0;
 
   /**
    * @brief Request for stopping the motion of the UAV.
@@ -186,12 +182,11 @@ public:
    *
    * @return a service response
    */
-  virtual const std::shared_ptr<mrs_msgs::srv::DynamicsConstraintsSrv::Response>
-  setConstraints(const std::shared_ptr<mrs_msgs::srv::DynamicsConstraintsSrv::Request> &constraints) = 0;
+  virtual const std::shared_ptr<mrs_msgs::srv::DynamicsConstraintsSrv::Response> setConstraints(const std::shared_ptr<mrs_msgs::srv::DynamicsConstraintsSrv::Request> &constraints) = 0;
 
   virtual ~Tracker() = default;
 };
 
-} // namespace mrs_uav_managers
+}  // namespace mrs_uav_managers
 
 #endif

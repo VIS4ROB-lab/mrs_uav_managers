@@ -10,6 +10,7 @@ public:
 
   FailedTakeoffTest() : mrs_uav_testing::TestGeneric() {
   }
+
 };
 
 bool FailedTakeoffTest::test() {
@@ -53,7 +54,7 @@ bool FailedTakeoffTest::test() {
 
   {
     std::shared_ptr<std_srvs::srv::SetBool::Request> request = std::make_shared<std_srvs::srv::SetBool::Request>();
-    request->data                                            = true;
+    request->data = true;
 
     {
       auto response = uh->sch_arming_.callSync(request);
