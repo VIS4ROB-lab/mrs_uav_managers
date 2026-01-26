@@ -424,7 +424,10 @@ class EstimationManager : public mrs_lib::Node {
   mrs_lib::PublisherHandler<geometry_msgs::msg::QuaternionStamped>
       ph_orientation_;
 
-  rclcpp::Time time_preinit_started_;
+  rclcpp::TimerBase::SharedPtr timer_wait_for_time_;
+  void                         timerWaitForTime();
+
+  rclcpp::Time                 time_preinit_started_;
   rclcpp::TimerBase::SharedPtr timer_preinit_;
   void timerPreinit();
 
@@ -553,11 +556,26 @@ EstimationManager::EstimationManager(rclcpp::NodeOptions options)
       mrs_lib::SubscriberHandler<mrs_msgs::msg::ControlManagerDiagnostics>(
           shopts, "~/control_manager_diagnostics_in");
 
-  time_preinit_started_ = clock_->now();
+  timer_wait_for_time_ = node_->create_wall_timer(std::chrono::duration<double>(1.0), std::bind(&EstimationManager::timerWaitForTime, this));
+}
 
-  timer_preinit_ = node_->create_wall_timer(
-      std::chrono::duration<double>(1.0),
-      std::bind(&EstimationManager::timerPreinit, this));
+//}
+
+/* timerWaitForTime() //{ */
+
+void EstimationManager::timerWaitForTime() {
+
+  auto now = clock_->now();
+
+  if (now.nanoseconds() == 0) {
+    RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000, "waiting for valid time");
+  } else {
+    time_preinit_started_ = now;
+
+    timer_wait_for_time_->cancel();
+
+    timer_preinit_ = node_->create_wall_timer(std::chrono::duration<double>(1.0), std::bind(&EstimationManager::timerPreinit, this));
+  }
 }
 
 //}
@@ -568,9 +586,8 @@ void EstimationManager::timerPreinit() {
   bool got_data = true;
 
   if (!sh_hw_api_capabilities_.hasMsg()) {
-    RCLCPP_INFO(node_->get_logger(),
-                "%s hw_api_capabilities message at topic: %s",
-                Support::waiting_for_string.c_str(),
+
+    RCLCPP_INFO(node_->get_logger(), "%s hw_api_capabilities message at topic: %s", Support::waiting_for_string.c_str(),
                 sh_hw_api_capabilities_.topicName().c_str());
 
     got_data = false;
