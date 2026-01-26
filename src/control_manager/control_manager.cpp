@@ -50,16 +50,20 @@
 #include <mrs_msgs/msg/reference.hpp>
 #include <mrs_msgs/msg/reference_array.hpp>
 #include <mrs_msgs/msg/reference_stamped.hpp>
+#include <mrs_msgs/msg/safety_area_manager_diagnostics.hpp>
 #include <mrs_msgs/msg/tracker_command.hpp>
 #include <mrs_msgs/msg/trajectory_reference.hpp>
 #include <mrs_msgs/srv/float64_stamped_srv.hpp>
+#include <mrs_msgs/srv/get_bool_srv.hpp>
 #include <mrs_msgs/srv/get_float64.hpp>
+#include <mrs_msgs/srv/get_reference_stamped_srv.hpp>
 #include <mrs_msgs/srv/reference_stamped_srv.hpp>
 #include <mrs_msgs/srv/string.hpp>
 #include <mrs_msgs/srv/transform_pose_srv.hpp>
 #include <mrs_msgs/srv/transform_reference_array_srv.hpp>
 #include <mrs_msgs/srv/transform_reference_srv.hpp>
 #include <mrs_msgs/srv/transform_vector3_srv.hpp>
+#include <mrs_msgs/srv/validate_path_to_point_srv.hpp>
 #include <mrs_msgs/srv/validate_reference.hpp>
 #include <mrs_msgs/srv/validate_reference_array.hpp>
 #include <mrs_msgs/srv/vec1.hpp>
@@ -416,10 +420,6 @@ class ControlManager : public mrs_lib::Node {
   mrs_lib::PublisherHandler<std_msgs::msg::Float64> ph_thrust_;
   mrs_lib::PublisherHandler<mrs_msgs::msg::ControlError> ph_control_error_;
   mrs_lib::PublisherHandler<visualization_msgs::msg::MarkerArray>
-      ph_safety_area_markers_;
-  mrs_lib::PublisherHandler<visualization_msgs::msg::MarkerArray>
-      ph_safety_area_coordinates_markers_;
-  mrs_lib::PublisherHandler<visualization_msgs::msg::MarkerArray>
       ph_disturbances_markers_;
   mrs_lib::PublisherHandler<mrs_msgs::msg::DynamicsConstraints>
       ph_current_constraints_;
@@ -448,7 +448,6 @@ class ControlManager : public mrs_lib::Node {
       ss_emergency_reference_;
   mrs_lib::ServiceServerHandler<std_srvs::srv::Trigger> ss_pirouette_;
   mrs_lib::ServiceServerHandler<std_srvs::srv::Trigger> ss_parachute_;
-  mrs_lib::ServiceServerHandler<mrs_msgs::srv::Float64StampedSrv> ss_set_min_z_;
 
   // human callbable services for references
   mrs_lib::ServiceServerHandler<mrs_msgs::srv::Vec4> ss_goto_;
@@ -512,6 +511,20 @@ class ControlManager : public mrs_lib::Node {
   mrs_lib::ServiceClientHandler<std_srvs::srv::SetBool>
       sch_set_odometry_callbacks_;
   mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger> sch_parachute_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::ReferenceStampedSrv>
+      sch_point_in_safety_area_2d_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::ReferenceStampedSrv>
+      sch_point_in_safety_area_3d_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::ValidatePathToPointSrv>
+      sch_path_to_point_in_safety_area_2d_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::ValidatePathToPointSrv>
+      sch_path_to_point_in_safety_area_3d_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetReferenceStampedSrv>
+      sch_get_max_z_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetReferenceStampedSrv>
+      sch_get_min_z_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetBoolSrv>
+      sch_is_safety_area_enabled_;
 
   // safety area min z servers
   mrs_lib::ServiceServerHandler<mrs_msgs::srv::GetFloat64> ss_get_min_z_;
@@ -588,32 +601,17 @@ class ControlManager : public mrs_lib::Node {
   std::tuple<bool, std::string> deployParachute(void);
   bool parachuteSrv(void);
 
-  // | ----------------------- safety area ---------------------- |
-
-  // safety area
-  std::unique_ptr<mrs_lib::safety_zone::SafetyZone> safety_zone_;
-
-  std::atomic<bool> use_safety_area_ = false;
-
-  std::string _safety_area_horizontal_frame_;
-  std::string _safety_area_vertical_frame_;
-
-  std::atomic<double> _safety_area_min_z_ = 0;
-
-  double _safety_area_max_z_ = 0;
-
   // safety area routines
+  mrs_lib::SubscriberHandler<mrs_msgs::msg::SafetyAreaManagerDiagnostics>
+      sh_safety_area_diag_;
+
   // those are passed to trackers using the common_handlers object
   bool isPointInSafetyArea2d(const mrs_msgs::msg::ReferenceStamped& point);
   bool isPointInSafetyArea3d(const mrs_msgs::msg::ReferenceStamped& point);
-  mrs_msgs::msg::ReferenceStamped getClosestPointInSafetyArea2d(
-      const mrs_msgs::msg::ReferenceStamped& point);
   bool isPathToPointInSafetyArea2d(const mrs_msgs::msg::ReferenceStamped& from,
                                    const mrs_msgs::msg::ReferenceStamped& to);
   bool isPathToPointInSafetyArea3d(const mrs_msgs::msg::ReferenceStamped& from,
                                    const mrs_msgs::msg::ReferenceStamped& to);
-  mrs_msgs::msg::ReferenceStamped getClosestPointInSafetyArea3d(
-      const mrs_msgs::msg::ReferenceStamped& point);
   double getMinZ(const std::string& frame_id);
   double getMaxZ(const std::string& frame_id);
 
@@ -719,10 +717,6 @@ class ControlManager : public mrs_lib::Node {
   bool callbackParachute(
       const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
       const std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-  bool callbackSetMinZ(
-      const std::shared_ptr<mrs_msgs::srv::Float64StampedSrv::Request> request,
-      const std::shared_ptr<mrs_msgs::srv::Float64StampedSrv::Response>
-          response);
   bool callbackToggleOutput(
       const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
       const std::shared_ptr<std_srvs::srv::SetBool::Response> response);
@@ -733,9 +727,6 @@ class ControlManager : public mrs_lib::Node {
       const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
       const std::shared_ptr<std_srvs::srv::SetBool::Response> response);
   bool callbackEnableBumper(
-      const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
-      const std::shared_ptr<std_srvs::srv::SetBool::Response> response);
-  bool callbackUseSafetyArea(
       const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
       const std::shared_ptr<std_srvs::srv::SetBool::Response> response);
 
@@ -947,6 +938,7 @@ class ControlManager : public mrs_lib::Node {
   std::shared_ptr<TimerType> timer_joystick_;
   void timerJoystick();
   double _joystick_timer_rate_ = 0;
+  std::atomic<bool> running_timer_joystick_ = false;
 
   double _joystick_carrot_distance_ = 0;
 
@@ -1164,53 +1156,6 @@ void ControlManager::initialize(void) {
                            common_handlers_->throttle_model.B);
   param_loader_->loadParam("motor_params/n_motors",
                            common_handlers_->throttle_model.n_motors);
-
-  // | ----------------------- safety area ---------------------- |
-
-  bool use_safety_area;
-  param_loader_->loadParam("safety_area/enabled", use_safety_area);
-  use_safety_area_ = use_safety_area;
-
-  param_loader_->loadParam("safety_area/horizontal/frame_name",
-                           _safety_area_horizontal_frame_);
-
-  param_loader_->loadParam("safety_area/vertical/frame_name",
-                           _safety_area_vertical_frame_);
-  param_loader_->loadParam("safety_area/vertical/max_z", _safety_area_max_z_);
-
-  {
-    double temp;
-    param_loader_->loadParam("safety_area/vertical/min_z", temp);
-
-    _safety_area_min_z_ = temp;
-  }
-
-  if (use_safety_area_) {
-    Eigen::MatrixXd border_points = param_loader_->loadMatrixDynamic2(
-        "safety_area/horizontal/points", -1, 2);
-
-    try {
-      std::vector<Eigen::MatrixXd> polygon_obstacle_points;
-      std::vector<Eigen::MatrixXd> point_obstacle_points;
-
-      safety_zone_ =
-          std::make_unique<mrs_lib::safety_zone::SafetyZone>(border_points);
-    }
-
-    catch (mrs_lib::safety_zone::BorderError& e) {
-      RCLCPP_ERROR(
-          node_->get_logger(),
-          "SafetyArea: wrong configruation for the safety zone border polygon");
-      rclcpp::shutdown();
-      exit(1);
-    } catch (...) {
-      RCLCPP_ERROR(node_->get_logger(), "SafetyArea: unhandled exception!");
-      rclcpp::shutdown();
-      exit(1);
-    }
-
-    RCLCPP_INFO(node_->get_logger(), "safety area initialized");
-  }
 
   param_loader_->setPrefix("mrs_uav_managers/control_manager/");
 
@@ -1559,7 +1504,6 @@ void ControlManager::initialize(void) {
   common_handlers_->scope_timer.enabled = scope_timer_enabled_;
   common_handlers_->scope_timer.logger = scope_timer_logger_;
 
-  common_handlers_->safety_area.use_safety_area = use_safety_area_;
   common_handlers_->safety_area.isPointInSafetyArea2d = std::bind(
       &ControlManager::isPointInSafetyArea2d, this, std::placeholders::_1);
   common_handlers_->safety_area.isPointInSafetyArea3d = std::bind(
@@ -1612,7 +1556,7 @@ void ControlManager::initialize(void) {
     param_loader_->loadParam(tracker_name + "/address", address);
     param_loader_->loadParam(tracker_name + "/namespace", name_space);
     param_loader_->loadParam(tracker_name + "/human_switchable",
-                             human_switchable, false);
+                             human_switchable);
 
     TrackerParams new_tracker(address, name_space, human_switchable);
     trackers_.insert(
@@ -1825,7 +1769,7 @@ void ControlManager::initialize(void) {
     param_loader_->loadParam(controller_name + "/odometry_innovation_threshold",
                              odometry_innovation_threshold);
     param_loader_->loadParam(controller_name + "/human_switchable",
-                             human_switchable, false);
+                             human_switchable);
 
     // check if the controller can output some of the required outputs
     {
@@ -2221,30 +2165,6 @@ void ControlManager::initialize(void) {
     mrs_lib::PublisherHandlerOptions opts;
 
     opts.node = node_;
-    opts.throttle_rate = 1.0;
-    // TODO latch
-
-    ph_safety_area_markers_ =
-        mrs_lib::PublisherHandler<visualization_msgs::msg::MarkerArray>(
-            opts, "~/safety_area_markers_out");
-  }
-
-  {
-    mrs_lib::PublisherHandlerOptions opts;
-
-    opts.node = node_;
-    opts.throttle_rate = 1.0;
-    // TODO latch
-
-    ph_safety_area_coordinates_markers_ =
-        mrs_lib::PublisherHandler<visualization_msgs::msg::MarkerArray>(
-            opts, "~/safety_area_coordinates_markers_out");
-  }
-
-  {
-    mrs_lib::PublisherHandlerOptions opts;
-
-    opts.node = node_;
     opts.throttle_rate = 10.0;
 
     ph_disturbances_markers_ =
@@ -2313,6 +2233,9 @@ void ControlManager::initialize(void) {
       shopts, "~/bumper_sectors_in");
   sh_max_z_ = mrs_lib::SubscriberHandler<mrs_msgs::msg::Float64Stamped>(
       shopts, "~/max_z_in");
+  sh_safety_area_diag_ =
+      mrs_lib::SubscriberHandler<mrs_msgs::msg::SafetyAreaManagerDiagnostics>(
+          shopts, "~/safety_area_diag_in");
   sh_joystick_ = mrs_lib::SubscriberHandler<sensor_msgs::msg::Joy>(
       shopts, "~/joystick_in", &ControlManager::callbackJoystick, this);
   sh_gnss_ = mrs_lib::SubscriberHandler<sensor_msgs::msg::NavSatFix>(
@@ -2387,11 +2310,6 @@ void ControlManager::initialize(void) {
       std::bind(&ControlManager::callbackUseJoystick, this,
                 std::placeholders::_1, std::placeholders::_2),
       rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
-  ss_use_safety_area_ = mrs_lib::ServiceServerHandler<std_srvs::srv::SetBool>(
-      node_, "~/use_safety_area_in",
-      std::bind(&ControlManager::callbackUseSafetyArea, this,
-                std::placeholders::_1, std::placeholders::_2),
-      rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
   ss_eland_ = mrs_lib::ServiceServerHandler<std_srvs::srv::Trigger>(
       node_, "~/eland_in",
       std::bind(&ControlManager::callbackEland, this, std::placeholders::_1,
@@ -2402,6 +2320,30 @@ void ControlManager::initialize(void) {
       std::bind(&ControlManager::callbackParachute, this, std::placeholders::_1,
                 std::placeholders::_2),
       rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
+  ss_transform_reference_ =
+      mrs_lib::ServiceServerHandler<mrs_msgs::srv::TransformReferenceSrv>(
+          node_, "~/transform_reference_in",
+          std::bind(&ControlManager::callbackTransformReference, this,
+                    std::placeholders::_1, std::placeholders::_2),
+          rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
+  ss_transform_reference_array_ =
+      mrs_lib::ServiceServerHandler<mrs_msgs::srv::TransformReferenceArraySrv>(
+          node_, "~/transform_reference_array_in",
+          std::bind(&ControlManager::callbackTransformReferenceArray, this,
+                    std::placeholders::_1, std::placeholders::_2),
+          rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
+  ss_transform_pose_ =
+      mrs_lib::ServiceServerHandler<mrs_msgs::srv::TransformPoseSrv>(
+          node_, "~/transform_pose_in",
+          std::bind(&ControlManager::callbackTransformPose, this,
+                    std::placeholders::_1, std::placeholders::_2),
+          rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
+  ss_transform_vector3_ =
+      mrs_lib::ServiceServerHandler<mrs_msgs::srv::TransformVector3Srv>(
+          node_, "~/transform_vector3_in",
+          std::bind(&ControlManager::callbackTransformVector3, this,
+                    std::placeholders::_1, std::placeholders::_2),
+          rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
   ss_set_min_z_ =
       mrs_lib::ServiceServerHandler<mrs_msgs::srv::Float64StampedSrv>(
           node_, "~/set_min_z_in",
@@ -2498,6 +2440,27 @@ void ControlManager::initialize(void) {
       node_, "~/ungrip_out", cbkgrp_sc_);
   sch_parachute_ = mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger>(
       node_, "~/parachute_out", cbkgrp_sc_);
+  sch_point_in_safety_area_2d_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::ReferenceStampedSrv>(
+          node_, "~/point_in_safety_area_2d_out", cbkgrp_sc_);
+  sch_point_in_safety_area_3d_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::ReferenceStampedSrv>(
+          node_, "~/point_in_safety_area_3d_out", cbkgrp_sc_);
+  sch_path_to_point_in_safety_area_2d_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::ValidatePathToPointSrv>(
+          node_, "~/path_in_safety_area_2d_out", cbkgrp_sc_);
+  sch_path_to_point_in_safety_area_3d_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::ValidatePathToPointSrv>(
+          node_, "~/path_in_safety_area_3d_out", cbkgrp_sc_);
+  sch_get_min_z_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetReferenceStampedSrv>(
+          node_, "~/get_min_z_out", cbkgrp_sc_);
+  sch_get_max_z_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetReferenceStampedSrv>(
+          node_, "~/get_max_z_out", cbkgrp_sc_);
+  sch_is_safety_area_enabled_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetBoolSrv>(
+          node_, "~/is_safety_area_enabled_out", cbkgrp_sc_);
 
   // | ---------------- setpoint command services --------------- |
 
@@ -2942,211 +2905,6 @@ void ControlManager::timerStatus() {
     speed_out.value = speed;
 
     ph_speed_.publish(speed_out);
-  }
-
-  // --------------------------------------------------------------
-  // |               publish the safety area markers              |
-  // --------------------------------------------------------------
-
-  if (use_safety_area_) {
-    mrs_msgs::msg::ReferenceStamped temp_ref;
-    temp_ref.header.frame_id = _safety_area_horizontal_frame_;
-
-    geometry_msgs::msg::TransformStamped tf;
-
-    auto ret = transformer_->getTransform(_safety_area_horizontal_frame_,
-                                          "local_origin", clock_->now());
-
-    if (ret) {
-      RCLCPP_INFO_ONCE(node_->get_logger(),
-                       "got TFs, publishing safety area markers");
-
-      visualization_msgs::msg::MarkerArray safety_area_marker_array;
-      visualization_msgs::msg::MarkerArray safety_area_coordinates_marker_array;
-
-      mrs_lib::safety_zone::Polygon border = safety_zone_->getBorder();
-
-      std::vector<geometry_msgs::msg::Point> border_points_bot_original =
-          border.getPointMessageVector(getMinZ(_safety_area_horizontal_frame_));
-      std::vector<geometry_msgs::msg::Point> border_points_top_original =
-          border.getPointMessageVector(getMaxZ(_safety_area_horizontal_frame_));
-
-      std::vector<geometry_msgs::msg::Point> border_points_bot_transformed =
-          border_points_bot_original;
-      std::vector<geometry_msgs::msg::Point> border_points_top_transformed =
-          border_points_bot_original;
-
-      // if we fail in transforming the area at some point
-      // do not publish it at all
-      bool tf_success = true;
-
-      geometry_msgs::msg::TransformStamped tf = ret.value();
-
-      /* transform area points to local origin //{ */
-
-      // transform border bottom points to local origin
-      for (size_t i = 0; i < border_points_bot_original.size(); i++) {
-        temp_ref.header.frame_id = _safety_area_horizontal_frame_;
-        temp_ref.header.stamp = clock_->now();
-        temp_ref.reference.position.x = border_points_bot_original.at(i).x;
-        temp_ref.reference.position.y = border_points_bot_original.at(i).y;
-        temp_ref.reference.position.z = border_points_bot_original.at(i).z;
-
-        if (auto ret = transformer_->transform(temp_ref, tf)) {
-          temp_ref = ret.value();
-
-          border_points_bot_transformed.at(i).x = temp_ref.reference.position.x;
-          border_points_bot_transformed.at(i).y = temp_ref.reference.position.y;
-          border_points_bot_transformed.at(i).z = temp_ref.reference.position.z;
-
-        } else {
-          tf_success = false;
-        }
-      }
-
-      // transform border top points to local origin
-      for (size_t i = 0; i < border_points_top_original.size(); i++) {
-        temp_ref.header.frame_id = _safety_area_horizontal_frame_;
-        temp_ref.header.stamp = clock_->now();
-        temp_ref.reference.position.x = border_points_top_original.at(i).x;
-        temp_ref.reference.position.y = border_points_top_original.at(i).y;
-        temp_ref.reference.position.z = border_points_top_original.at(i).z;
-
-        if (auto ret = transformer_->transform(temp_ref, tf)) {
-          temp_ref = ret.value();
-
-          border_points_top_transformed.at(i).x = temp_ref.reference.position.x;
-          border_points_top_transformed.at(i).y = temp_ref.reference.position.y;
-          border_points_top_transformed.at(i).z = temp_ref.reference.position.z;
-
-        } else {
-          tf_success = false;
-        }
-      }
-
-      //}
-
-      visualization_msgs::msg::Marker safety_area_marker;
-
-      safety_area_marker.header.frame_id = _uav_name_ + "/local_origin";
-      safety_area_marker.header.stamp = clock_->now();
-      safety_area_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
-      safety_area_marker.color.a = 0.15;
-      safety_area_marker.scale.x = 0.2;
-      safety_area_marker.color.r = 1;
-      safety_area_marker.color.g = 0;
-      safety_area_marker.color.b = 0;
-
-      safety_area_marker.pose.orientation = mrs_lib::AttitudeConverter(0, 0, 0);
-
-      visualization_msgs::msg::Marker safety_area_coordinates_marker;
-
-      safety_area_coordinates_marker.header.frame_id =
-          _uav_name_ + "/local_origin";
-      safety_area_coordinates_marker.header.stamp = clock_->now();
-      safety_area_coordinates_marker.type =
-          visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-      safety_area_coordinates_marker.color.a = 1;
-      safety_area_coordinates_marker.scale.z = 1.0;
-      safety_area_coordinates_marker.color.r = 0;
-      safety_area_coordinates_marker.color.g = 0;
-      safety_area_coordinates_marker.color.b = 0;
-
-      safety_area_coordinates_marker.id = 0;
-
-      safety_area_coordinates_marker.pose.orientation =
-          mrs_lib::AttitudeConverter(0, 0, 0);
-
-      /* adding safety area points //{ */
-
-      // bottom border
-      for (size_t i = 0; i < border_points_bot_transformed.size(); i++) {
-        safety_area_marker.points.push_back(
-            border_points_bot_transformed.at(i));
-        safety_area_marker.points.push_back(border_points_bot_transformed.at(
-            (i + 1) % border_points_bot_transformed.size()));
-
-        std::stringstream ss;
-
-        if (_safety_area_horizontal_frame_ == "latlon_origin") {
-          ss << "idx: " << i << std::endl
-             << std::setprecision(6) << std::fixed
-             << "lat: " << border_points_bot_original.at(i).x << std::endl
-             << "lon: " << border_points_bot_original.at(i).y;
-        } else {
-          ss << "idx: " << i << std::endl
-             << std::setprecision(1) << std::fixed
-             << "x: " << border_points_bot_original.at(i).x << std::endl
-             << "y: " << border_points_bot_original.at(i).y;
-        }
-
-        safety_area_coordinates_marker.color.r = 0;
-        safety_area_coordinates_marker.color.g = 0;
-        safety_area_coordinates_marker.color.b = 0;
-
-        safety_area_coordinates_marker.pose.position =
-            border_points_bot_transformed.at(i);
-        safety_area_coordinates_marker.text = ss.str();
-        safety_area_coordinates_marker.id++;
-
-        safety_area_coordinates_marker_array.markers.push_back(
-            safety_area_coordinates_marker);
-      }
-
-      // top border + top/bot edges
-      for (size_t i = 0; i < border_points_top_transformed.size(); i++) {
-        safety_area_marker.points.push_back(
-            border_points_top_transformed.at(i));
-        safety_area_marker.points.push_back(border_points_top_transformed.at(
-            (i + 1) % border_points_top_transformed.size()));
-
-        safety_area_marker.points.push_back(
-            border_points_bot_transformed.at(i));
-        safety_area_marker.points.push_back(
-            border_points_top_transformed.at(i));
-
-        std::stringstream ss;
-
-        if (_safety_area_horizontal_frame_ == "latlon_origin") {
-          ss << "idx: " << i << std::endl
-             << std::setprecision(6) << std::fixed
-             << "lat: " << border_points_bot_original.at(i).x << std::endl
-             << "lon: " << border_points_bot_original.at(i).y;
-        } else {
-          ss << "idx: " << i << std::endl
-             << std::setprecision(1) << std::fixed
-             << "x: " << border_points_bot_original.at(i).x << std::endl
-             << "y: " << border_points_bot_original.at(i).y;
-        }
-
-        safety_area_coordinates_marker.color.r = 1;
-        safety_area_coordinates_marker.color.g = 1;
-        safety_area_coordinates_marker.color.b = 1;
-
-        safety_area_coordinates_marker.pose.position =
-            border_points_top_transformed.at(i);
-        safety_area_coordinates_marker.text = ss.str();
-        safety_area_coordinates_marker.id++;
-
-        safety_area_coordinates_marker_array.markers.push_back(
-            safety_area_coordinates_marker);
-      }
-
-      //}
-
-      if (tf_success) {
-        safety_area_marker_array.markers.push_back(safety_area_marker);
-
-        ph_safety_area_markers_.publish(safety_area_marker_array);
-
-        ph_safety_area_coordinates_markers_.publish(
-            safety_area_coordinates_marker_array);
-      }
-
-    } else {
-      RCLCPP_WARN_ONCE(node_->get_logger(),
-                       "missing TFs, can not publish safety area markers");
-    }
   }
 
   // --------------------------------------------------------------
@@ -4228,10 +3986,11 @@ void ControlManager::timerBumper() {
     return;
   }
 
+  // bumper should be only active when flying normally
   if (!isFlyingNormally()) {
-    if (!(bumper_repulsing_ || rc_goto_active_)) {
+    if (!bumper_repulsing_) {
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                           "bumpper can not function, not flying 'normally'");
+                           "bumper can not function, not flying 'normally'");
       return;
     }
   }
@@ -4843,6 +4602,8 @@ void ControlManager::callbackJoystick(
     return;
   }
 
+  mrs_lib::AtomicScopeFlag unset_running(running_timer_joystick_);
+
   mrs_lib::Routine profiler_routine =
       profiler_.createRoutine("callbackJoystick");
   mrs_lib::ScopeTimer timer =
@@ -5089,6 +4850,14 @@ void ControlManager::callbackRC(
 
       // rc control deactivation
       if (rc_goto_active_ && channel_low) {
+        for (int i = 0; i < 10; i++) {
+          if (!running_timer_joystick_) {
+            break;
+          } else {
+            clock_->sleep_for(0.01s);
+          }
+        }
+
         RCLCPP_INFO(node_->get_logger(), "deactivating RC joystick");
 
         callbacks_enabled_ = true;
@@ -5154,9 +4923,6 @@ void ControlManager::callbackRC(
 /* timeoutUavState() //{ */
 
 void ControlManager::timeoutUavState(const double& missing_for) {
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-
   if (output_enabled_ && last_control_output.control_output &&
       !failsafe_triggered_) {
     // We need to fire up timerFailsafe, which will regularly trigger the
@@ -5469,46 +5235,6 @@ bool ControlManager::callbackParachute(
 
 //}
 
-/* //{ callbackSetMinZ() */
-
-bool ControlManager::callbackSetMinZ(
-    const std::shared_ptr<mrs_msgs::srv::Float64StampedSrv::Request> request,
-    const std::shared_ptr<mrs_msgs::srv::Float64StampedSrv::Response>
-        response) {
-  if (!is_initialized_) {
-    return false;
-  }
-
-  if (!use_safety_area_) {
-    response->success = true;
-    response->message = "safety area is disabled";
-    return true;
-  }
-
-  // | -------- transform min_z to the safety area frame -------- |
-
-  mrs_msgs::msg::ReferenceStamped point;
-  point.header = request->header;
-  point.reference.position.z = request->value;
-
-  auto result =
-      transformer_->transformSingle(point, _safety_area_vertical_frame_);
-
-  if (result) {
-    _safety_area_min_z_ = result.value().reference.position.z;
-
-    response->success = true;
-    response->message = "safety area's min z updated";
-
-  } else {
-    response->success = false;
-    response->message =
-        "could not transform the value to safety area's vertical frame";
-  }
-
-  return true;
-}
-
 //}
 
 /* //{ callbackToggleOutput() */
@@ -5530,14 +5256,11 @@ bool ControlManager::callbackToggleOutput(
   bool prereq_check = true;
 
   {
-    mrs_msgs::msg::ReferenceStamped current_coord;
-    current_coord.header.frame_id = uav_state.header.frame_id;
-    current_coord.reference.position.x = uav_state.pose.position.x;
-    current_coord.reference.position.y = uav_state.pose.position.y;
-
-    if (!isPointInSafetyArea2d(current_coord)) {
-      ss << "cannot toggle output, the UAV is outside of the safety area!";
-      prereq_check = false;
+    if (sh_safety_area_diag_.hasMsg()) {
+      if (!sh_safety_area_diag_.getMsg()->position_valid_2d) {
+        ss << "cannot toggle output, the UAV is outside of the safety area!";
+        prereq_check = false;
+      }
     }
   }
 
@@ -6165,31 +5888,6 @@ bool ControlManager::callbackEnableBumper(
   std::stringstream ss;
 
   ss << "bumper " << (bumper_enabled_ ? "enalbed" : "disabled");
-
-  RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
-
-  response->success = true;
-  response->message = ss.str();
-
-  return true;
-}
-
-//}
-
-/* //{ callbackUseSafetyArea() */
-
-bool ControlManager::callbackUseSafetyArea(
-    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
-    const std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
-  if (!is_initialized_) {
-    return false;
-  }
-
-  use_safety_area_ = request->data;
-
-  std::stringstream ss;
-
-  ss << "safety area " << (use_safety_area_ ? "enabled" : "disabled");
 
   RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
 
@@ -7286,553 +6984,565 @@ ControlManager::setTrajectoryReference(
 
   /* safety area check //{ */
 
-  if (use_safety_area_) {
-    int last_valid_idx = 0;
-    int first_invalid_idx = -1;
+  if (sh_safety_area_diag_.hasMsg()) {
+    auto msg = sh_safety_area_diag_.getMsg();
 
-    double min_z = getMinZ(processed_trajectory.header.frame_id);
-    double max_z = getMaxZ(processed_trajectory.header.frame_id);
+    if (msg->safety_area_enabled) {
+      int last_valid_idx = 0;
+      int first_invalid_idx = -1;
 
-    for (int i = 0; i < trajectory_size; i++) {
-      if (_snap_trajectory_to_safety_area_) {
-        // saturate the trajectory to min and max Z
-        if (processed_trajectory.points.at(i).position.z < min_z) {
-          processed_trajectory.points.at(i).position.z = min_z;
-          RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                               "the trajectory violates the minimum Z!");
+      double min_z = getMinZ(processed_trajectory.header.frame_id);
+      double max_z = getMaxZ(processed_trajectory.header.frame_id);
+
+      for (int i = 0; i < trajectory_size; i++) {
+        if (_snap_trajectory_to_safety_area_) {
+          // saturate the trajectory to min and max Z
+          if (processed_trajectory.points.at(i).position.z < min_z) {
+            processed_trajectory.points.at(i).position.z = min_z;
+            RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                 "the trajectory violates the minimum Z!");
+            trajectory_modified = true;
+          }
+
+          if (processed_trajectory.points.at(i).position.z > max_z) {
+            processed_trajectory.points.at(i).position.z = max_z;
+            RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                 "the trajectory violates the maximum Z!");
+            trajectory_modified = true;
+          }
+        }
+
+        // check the point against the safety area
+        mrs_msgs::msg::ReferenceStamped des_reference;
+        des_reference.header = processed_trajectory.header;
+        des_reference.reference = processed_trajectory.points.at(i);
+
+        if (!isPointInSafetyArea3d(des_reference)) {
+          RCLCPP_WARN_THROTTLE(
+              node_->get_logger(), *clock_, 1000,
+              "the trajectory contains points outside of the safety area!");
           trajectory_modified = true;
-        }
 
-        if (processed_trajectory.points.at(i).position.z > max_z) {
-          processed_trajectory.points.at(i).position.z = max_z;
-          RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                               "the trajectory violates the maximum Z!");
-          trajectory_modified = true;
-        }
-      }
+          // the first invalid point
+          if (first_invalid_idx == -1) {
+            first_invalid_idx = i;
 
-      // check the point against the safety area
-      mrs_msgs::msg::ReferenceStamped des_reference;
-      des_reference.header = processed_trajectory.header;
-      des_reference.reference = processed_trajectory.points.at(i);
+            last_valid_idx = i - 1;
+          }
 
-      if (!isPointInSafetyArea3d(des_reference)) {
-        RCLCPP_WARN_THROTTLE(
-            node_->get_logger(), *clock_, 1000,
-            "the trajectory contains points outside of the safety area!");
-        trajectory_modified = true;
+          // the point is ok
+        } else {
+          // we found a point, which is ok, after finding a point which was not
+          // ok
+          if (first_invalid_idx != -1) {
+            // special case, we had no valid point so far
+            if (last_valid_idx == -1) {
+              ss << "the trajectory starts outside of the safety area!";
+              RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                          "" << ss.str());
+              return std::tuple(false, ss.str(), false,
+                                std::vector<std::string>(), std::vector<bool>(),
+                                std::vector<std::string>());
 
-        // the first invalid point
-        if (first_invalid_idx == -1) {
-          first_invalid_idx = i;
-
-          last_valid_idx = i - 1;
-        }
-
-        // the point is ok
-      } else {
-        // we found a point, which is ok, after finding a point which was not ok
-        if (first_invalid_idx != -1) {
-          // special case, we had no valid point so far
-          if (last_valid_idx == -1) {
-            ss << "the trajectory starts outside of the safety area!";
-            RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                        "" << ss.str());
-            return std::tuple(false, ss.str(), false,
-                              std::vector<std::string>(), std::vector<bool>(),
-                              std::vector<std::string>());
-          } else {
-            if (!_snap_trajectory_to_safety_area_) {
-              break;
-            }
-
-            // iterpolate between the last valid point and this new valid point
-            double angle = atan2(
-                (processed_trajectory.points.at(i).position.y -
-                 processed_trajectory.points.at(last_valid_idx).position.y),
-                (processed_trajectory.points.at(i).position.x -
-                 processed_trajectory.points.at(last_valid_idx).position.x));
-
-            double dist_two_points = mrs_lib::geometry::dist(
-                vec2_t(processed_trajectory.points.at(i).position.x,
-                       processed_trajectory.points.at(i).position.y),
-                vec2_t(
-                    processed_trajectory.points.at(last_valid_idx).position.x,
-                    processed_trajectory.points.at(last_valid_idx).position.y));
-            double step = dist_two_points / (i - last_valid_idx);
-
-            for (int j = last_valid_idx; j < i; j++) {
-              mrs_msgs::msg::ReferenceStamped temp_point;
-              temp_point.header.frame_id = processed_trajectory.header.frame_id;
-              temp_point.reference.position.x =
-                  processed_trajectory.points.at(last_valid_idx).position.x +
-                  (j - last_valid_idx) * cos(angle) * step;
-              temp_point.reference.position.y =
-                  processed_trajectory.points.at(last_valid_idx).position.y +
-                  (j - last_valid_idx) * sin(angle) * step;
-
-              if (!isPointInSafetyArea2d(temp_point)) {
-                RCLCPP_WARN_THROTTLE(
-                    node_->get_logger(), *clock_, 1000,
-                    "trajectory interpolation: point outside safety area, "
-                    "correcting to closest safe point");
-                temp_point = getClosestPointInSafetyArea2d(temp_point);
+              // we have a valid point in the past
+            } else {
+              if (!_snap_trajectory_to_safety_area_) {
+                break;
               }
 
-              processed_trajectory.points.at(j).position.x =
-                  temp_point.reference.position.x;
-              processed_trajectory.points.at(j).position.y =
-                  temp_point.reference.position.y;
+              bool interpolation_success = true;
+
+              // iterpolate between the last valid point and this new valid
+              // point
+              double angle = atan2(
+                  (processed_trajectory.points.at(i).position.y -
+                   processed_trajectory.points.at(last_valid_idx).position.y),
+                  (processed_trajectory.points.at(i).position.x -
+                   processed_trajectory.points.at(last_valid_idx).position.x));
+
+              double dist_two_points = mrs_lib::geometry::dist(
+                  vec2_t(processed_trajectory.points.at(i).position.x,
+                         processed_trajectory.points.at(i).position.y),
+                  vec2_t(
+                      processed_trajectory.points.at(last_valid_idx).position.x,
+                      processed_trajectory.points.at(last_valid_idx)
+                          .position.y));
+              double step = dist_two_points / (i - last_valid_idx);
+
+              for (int j = last_valid_idx; j < i; j++) {
+                mrs_msgs::msg::ReferenceStamped temp_point;
+                temp_point.header.frame_id =
+                    processed_trajectory.header.frame_id;
+                temp_point.reference.position.x =
+                    processed_trajectory.points.at(last_valid_idx).position.x +
+                    (j - last_valid_idx) * cos(angle) * step;
+                temp_point.reference.position.y =
+                    processed_trajectory.points.at(last_valid_idx).position.y +
+                    (j - last_valid_idx) * sin(angle) * step;
+
+                if (!isPointInSafetyArea2d(temp_point)) {
+                  interpolation_success = false;
+                  break;
+                } else {
+                  processed_trajectory.points.at(j).position.x =
+                      temp_point.reference.position.x;
+                  processed_trajectory.points.at(j).position.y =
+                      temp_point.reference.position.y;
+                }
+              }
+
+              if (!interpolation_success) {
+                break;
+              }
+
+              first_invalid_idx = -1;
             }
           }
 
-          first_invalid_idx = -1;
+          // special case, the trajectory does not end with a valid point
+          if (first_invalid_idx != -1) {
+            // super special case, the whole trajectory is invalid
+            if (first_invalid_idx == 0) {
+              ss << "the whole trajectory is outside of the safety area!";
+              RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                          "" << ss.str());
+              return std::tuple(false, ss.str(), false,
+                                std::vector<std::string>(), std::vector<bool>(),
+                                std::vector<std::string>());
+
+              // there is a good portion of the trajectory in the beginning
+            } else {
+              trajectory_size = last_valid_idx + 1;
+              processed_trajectory.points.resize(trajectory_size);
+              trajectory_modified = true;
+            }
+          }
         }
       }
-    }
 
-    // special case, the trajectory does not end with a valid point
-    if (first_invalid_idx != -1) {
-      // super special case, the whole trajectory is invalid
-      if (first_invalid_idx == 0) {
-        ss << "the whole trajectory is outside of the safety area!";
+      if (trajectory_size == 0) {
+        ss << "the trajectory happened to be empty after all the checks! This "
+              "message should not appear!";
         RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                     "" << ss.str());
         return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                           std::vector<bool>(), std::vector<std::string>());
-
-        // there is a good portion of the trajectory in the beginning
-      } else {
-        trajectory_size = last_valid_idx + 1;
-        processed_trajectory.points.resize(trajectory_size);
-        trajectory_modified = true;
       }
-    }
-  }
 
-  if (trajectory_size == 0) {
-    ss << "the trajectory happened to be empty after all the checks! This "
-          "message should not appear!";
-    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "" << ss.str());
-    return std::tuple(false, ss.str(), false, std::vector<std::string>(),
-                      std::vector<bool>(), std::vector<std::string>());
-  }
+      //}
 
-  //}
+      /* transform the trajectory to the current control frame //{ */
 
-  /* transform the trajectory to the current control frame //{ */
+      std::optional<geometry_msgs::msg::TransformStamped> tf_traj_state;
 
-  std::optional<geometry_msgs::msg::TransformStamped> tf_traj_state;
+      if (rclcpp::Time(processed_trajectory.header.stamp).seconds() >
+          clock_->now().seconds()) {
+        tf_traj_state =
+            transformer_->getTransform(processed_trajectory.header.frame_id, "",
+                                       processed_trajectory.header.stamp);
+      } else {
+        tf_traj_state = transformer_->getTransform(
+            processed_trajectory.header.frame_id, "", uav_state_.header.stamp);
+      }
 
-  if (rclcpp::Time(processed_trajectory.header.stamp).seconds() >
-      clock_->now().seconds()) {
-    tf_traj_state =
-        transformer_->getTransform(processed_trajectory.header.frame_id, "",
-                                   processed_trajectory.header.stamp);
-  } else {
-    tf_traj_state = transformer_->getTransform(
-        processed_trajectory.header.frame_id, "", uav_state_.header.stamp);
-  }
+      if (!tf_traj_state) {
+        ss << "could not create TF transformer for the trajectory";
+        RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                    "" << ss.str());
+        return std::tuple(false, ss.str(), false, std::vector<std::string>(),
+                          std::vector<bool>(), std::vector<std::string>());
+      }
 
-  if (!tf_traj_state) {
-    ss << "could not create TF transformer for the trajectory";
-    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "" << ss.str());
-    return std::tuple(false, ss.str(), false, std::vector<std::string>(),
-                      std::vector<bool>(), std::vector<std::string>());
-  }
+      processed_trajectory.header.frame_id =
+          transformer_->frame_to(*tf_traj_state);
 
-  processed_trajectory.header.frame_id = transformer_->frame_to(*tf_traj_state);
+      for (int i = 0; i < trajectory_size; i++) {
+        mrs_msgs::msg::ReferenceStamped trajectory_point;
+        trajectory_point.header = processed_trajectory.header;
+        trajectory_point.reference = processed_trajectory.points.at(i);
 
-  for (int i = 0; i < trajectory_size; i++) {
-    mrs_msgs::msg::ReferenceStamped trajectory_point;
-    trajectory_point.header = processed_trajectory.header;
-    trajectory_point.reference = processed_trajectory.points.at(i);
+        auto ret = transformer_->transform(trajectory_point, *tf_traj_state);
 
-    auto ret = transformer_->transform(trajectory_point, *tf_traj_state);
+        if (!ret) {
+          ss << "trajectory cannnot be transformed";
+          RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                      "" << ss.str());
+          return std::tuple(false, ss.str(), false, std::vector<std::string>(),
+                            std::vector<bool>(), std::vector<std::string>());
 
-    if (!ret) {
-      ss << "trajectory cannnot be transformed";
+        } else {
+          // transform the points in the trajectory to the current frame
+          processed_trajectory.points.at(i) = ret.value().reference;
+        }
+      }
+
+      //}
+
+      std::shared_ptr<mrs_msgs::srv::TrajectoryReferenceSrv::Request> request =
+          std::make_shared<mrs_msgs::srv::TrajectoryReferenceSrv::Request>();
+
+      // check for empty trajectory
+      if (processed_trajectory.points.size() == 0) {
+        ss << "reference trajectory was processing and it is now empty, this "
+              "should not happen!";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+        return std::tuple(false, ss.str(), false, std::vector<std::string>(),
+                          std::vector<bool>(), std::vector<std::string>());
+      }
+
+      // prepare the message for current tracker
+      request->trajectory = processed_trajectory;
+
+      bool success;
+      std::string message;
+      bool modified;
+      std::vector<std::string> tracker_names;
+      std::vector<bool> tracker_successes;
+      std::vector<std::string> tracker_messages;
+
+      {
+        std::scoped_lock lock(mutex_tracker_list_);
+
+        // set the trajectory to the currently active tracker
+        auto response = tracker_list_.at(active_tracker_idx_)
+                            ->setTrajectoryReference(request);
+
+        tracker_names.push_back(_tracker_names_.at(active_tracker_idx_));
+
+        if (response != nullptr) {
+          success = response->success;
+          message = response->message;
+          modified = response->modified || trajectory_modified;
+          tracker_successes.push_back(response->success);
+          tracker_messages.push_back(response->message);
+
+        } else {
+          ss << "the active tracker '"
+             << _tracker_names_.at(active_tracker_idx_)
+             << "' does not implement the 'setTrajectoryReference()' function!";
+          RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                      "" << ss.str());
+
+          success = true;
+          message = ss.str();
+          modified = false;
+          tracker_successes.push_back(false);
+          tracker_messages.push_back(ss.str());
+        }
+
+        // set the trajectory to the non-active trackers
+        for (size_t i = 0; i < tracker_list_.size(); i++) {
+          if (i != active_tracker_idx_) {
+            tracker_names.push_back(_tracker_names_.at(i));
+
+            response = tracker_list_.at(i)->setTrajectoryReference(request);
+
+            if (response != nullptr) {
+              tracker_successes.push_back(response->success);
+              tracker_messages.push_back(response->message);
+
+              if (response->success) {
+                std::stringstream ss;
+                ss << "trajectory loaded to non-active tracker '"
+                   << _tracker_names_.at(i);
+                RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                            "" << ss.str());
+              }
+
+            } else {
+              std::stringstream ss;
+              ss << "the tracker \"" << _tracker_names_.at(i)
+                 << "\" does not implement setTrajectoryReference()";
+              tracker_successes.push_back(false);
+              tracker_messages.push_back(ss.str());
+            }
+          }
+        }
+      }
+
+      return std::tuple(success, message, modified, tracker_names,
+                        tracker_successes, tracker_messages);
+    } else {
+      ss << "safety area diagnostics message is not available, can not set "
+            "trajectory";
       RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                   "" << ss.str());
       return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                         std::vector<bool>(), std::vector<std::string>());
-
-    } else {
-      // transform the points in the trajectory to the current frame
-      processed_trajectory.points.at(i) = ret.value().reference;
     }
   }
 
   //}
 
-  std::shared_ptr<mrs_msgs::srv::TrajectoryReferenceSrv::Request> request =
-      std::make_shared<mrs_msgs::srv::TrajectoryReferenceSrv::Request>();
+  /* isOffboard() //{ */
 
-  // check for empty trajectory
-  if (processed_trajectory.points.size() == 0) {
-    ss << "reference trajectory was processing and it is now empty, this "
-          "should not happen!";
-    RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                 "" << ss.str());
-    return std::tuple(false, ss.str(), false, std::vector<std::string>(),
-                      std::vector<bool>(), std::vector<std::string>());
-  }
-
-  // prepare the message for current tracker
-  request->trajectory = processed_trajectory;
-
-  bool success;
-  std::string message;
-  bool modified;
-  std::vector<std::string> tracker_names;
-  std::vector<bool> tracker_successes;
-  std::vector<std::string> tracker_messages;
-
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
-
-    // set the trajectory to the currently active tracker
-    auto response =
-        tracker_list_.at(active_tracker_idx_)->setTrajectoryReference(request);
-
-    tracker_names.push_back(_tracker_names_.at(active_tracker_idx_));
-
-    if (response != nullptr) {
-      success = response->success;
-      message = response->message;
-      modified = response->modified || trajectory_modified;
-      tracker_successes.push_back(response->success);
-      tracker_messages.push_back(response->message);
-
-    } else {
-      ss << "the active tracker '" << _tracker_names_.at(active_tracker_idx_)
-         << "' does not implement the 'setTrajectoryReference()' function!";
-      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                  "" << ss.str());
-
-      success = true;
-      message = ss.str();
-      modified = false;
-      tracker_successes.push_back(false);
-      tracker_messages.push_back(ss.str());
+  bool ControlManager::isOffboard(void) {
+    if (!sh_hw_api_status_.hasMsg()) {
+      return false;
     }
 
-    // set the trajectory to the non-active trackers
-    for (size_t i = 0; i < tracker_list_.size(); i++) {
-      if (i != active_tracker_idx_) {
-        tracker_names.push_back(_tracker_names_.at(i));
+    auto hw_api_status = sh_hw_api_status_.getMsg();
 
-        response = tracker_list_.at(i)->setTrajectoryReference(request);
+    return hw_api_status->connected && hw_api_status->offboard;
+  }
 
-        if (response != nullptr) {
-          tracker_successes.push_back(response->success);
-          tracker_messages.push_back(response->message);
+  //}
 
-          if (response->success) {
-            std::stringstream ss;
-            ss << "trajectory loaded to non-active tracker '"
-               << _tracker_names_.at(i);
-            RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                        "" << ss.str());
-          }
+  /* setCallbacks() //{ */
 
-        } else {
-          std::stringstream ss;
-          ss << "the tracker \"" << _tracker_names_.at(i)
-             << "\" does not implement setTrajectoryReference()";
-          tracker_successes.push_back(false);
-          tracker_messages.push_back(ss.str());
-        }
+  void ControlManager::setCallbacks(bool in) {
+    callbacks_enabled_ = in;
+
+    std::shared_ptr<std_srvs::srv::SetBool::Request> req_enable_callbacks =
+        std::make_shared<std_srvs::srv::SetBool::Request>();
+    req_enable_callbacks->data = callbacks_enabled_;
+
+    {
+      std::scoped_lock lock(mutex_tracker_list_);
+
+      // set callbacks to all trackers
+      for (int i = 0; i < int(tracker_list_.size()); i++) {
+        tracker_list_.at(i)->enableCallbacks(req_enable_callbacks);
       }
     }
   }
 
-  return std::tuple(success, message, modified, tracker_names,
-                    tracker_successes, tracker_messages);
-}
+  //}
 
-//}
+  /* publishDiagnostics() //{ */
 
-/* isOffboard() //{ */
+  void ControlManager::publishDiagnostics(void) {
+    if (!is_initialized_) {
+      return;
+    }
 
-bool ControlManager::isOffboard(void) {
-  if (!sh_hw_api_status_.hasMsg()) {
-    return false;
+    mrs_lib::Routine profiler_routine =
+        profiler_.createRoutine("publishDiagnostics");
+    mrs_lib::ScopeTimer timer =
+        mrs_lib::ScopeTimer(node_, "ControlManager::publishDiagnostics",
+                            scope_timer_logger_, scope_timer_enabled_);
+
+    mrs_msgs::msg::ControlManagerDiagnostics diagnostics_msg;
+
+    diagnostics_msg.stamp = clock_->now();
+    diagnostics_msg.uav_name = _uav_name_;
+
+    diagnostics_msg.desired_uav_state_rate = desired_uav_state_rate_;
+
+    diagnostics_msg.output_enabled = output_enabled_;
+
+    diagnostics_msg.joystick_active = rc_goto_active_;
+
+    diagnostics_msg.flying_normally = isFlyingNormally();
+
+    diagnostics_msg.bumper_active = bumper_repulsing_;
+
+    // | ----------------- fill the tracker status ---------------- |
+
+    {
+      std::scoped_lock lock(mutex_tracker_list_);
+
+      mrs_msgs::msg::TrackerStatus tracker_status;
+
+      diagnostics_msg.active_tracker = _tracker_names_.at(active_tracker_idx_);
+      diagnostics_msg.tracker_status =
+          tracker_list_.at(active_tracker_idx_)->getStatus();
+    }
+
+    // | --------------- fill the controller status --------------- |
+
+    {
+      std::scoped_lock lock(mutex_controller_list_);
+
+      mrs_msgs::msg::ControllerStatus controller_status;
+
+      diagnostics_msg.active_controller =
+          _controller_names_.at(active_controller_idx_);
+      diagnostics_msg.controller_status =
+          controller_list_.at(active_controller_idx_)->getStatus();
+    }
+
+    // | ------------ fill in the available controllers ----------- |
+
+    for (int i = 0; i < int(_controller_names_.size()); i++) {
+      if ((_controller_names_.at(i) != _failsafe_controller_name_) &&
+          (_controller_names_.at(i) != _eland_controller_name_)) {
+        diagnostics_msg.available_controllers.push_back(
+            _controller_names_.at(i));
+        diagnostics_msg.human_switchable_controllers.push_back(
+            controllers_.at(_controller_names_.at(i)).human_switchable);
+      }
+    }
+
+    // | ------------- fill in the available trackers ------------- |
+
+    for (int i = 0; i < int(_tracker_names_.size()); i++) {
+      if (_tracker_names_.at(i) != _null_tracker_name_) {
+        diagnostics_msg.available_trackers.push_back(_tracker_names_.at(i));
+        diagnostics_msg.human_switchable_trackers.push_back(
+            trackers_.at(_tracker_names_.at(i)).human_switchable);
+      }
+    }
+
+    // | ------------------------- publish ------------------------ |
+
+    ph_diagnostics_.publish(diagnostics_msg);
   }
 
-  auto hw_api_status = sh_hw_api_status_.getMsg();
+  //}
 
-  return hw_api_status->connected && hw_api_status->offboard;
-}
+  /* setConstraintsToTrackers() //{ */
 
-//}
+  void ControlManager::setConstraintsToTrackers(
+      const mrs_msgs::srv::DynamicsConstraintsSrv::Request& constraints) {
+    std::shared_ptr<mrs_msgs::srv::DynamicsConstraintsSrv::Request> request =
+        std::make_shared<mrs_msgs::srv::DynamicsConstraintsSrv::Request>(
+            constraints);
 
-/* setCallbacks() //{ */
+    {
+      std::scoped_lock lock(mutex_tracker_list_);
 
-void ControlManager::setCallbacks(bool in) {
-  callbacks_enabled_ = in;
+      // for each tracker
+      for (int i = 0; i < int(tracker_list_.size()); i++) {
+        // if it is the active one, update and retrieve the command
+        auto response = tracker_list_.at(i)->setConstraints(request);
+      }
+    }
+  }
 
-  std::shared_ptr<std_srvs::srv::SetBool::Request> req_enable_callbacks =
-      std::make_shared<std_srvs::srv::SetBool::Request>();
-  req_enable_callbacks->data = callbacks_enabled_;
+  //}
 
-  {
+  /* setConstraintsToControllers() //{ */
+
+  void ControlManager::setConstraintsToControllers(
+      const mrs_msgs::srv::DynamicsConstraintsSrv::Request& constraints) {
+    std::shared_ptr<mrs_msgs::srv::DynamicsConstraintsSrv::Request> request =
+        std::make_shared<mrs_msgs::srv::DynamicsConstraintsSrv::Request>(
+            constraints);
+
+    {
+      std::scoped_lock lock(mutex_controller_list_);
+
+      // for each controller
+      for (int i = 0; i < int(controller_list_.size()); i++) {
+        // if it is the active one, update and retrieve the command
+        auto response = controller_list_.at(i)->setConstraints(request);
+      }
+    }
+  }
+
+  //}
+
+  /* setConstraints() //{ */
+
+  void ControlManager::setConstraints(
+      const mrs_msgs::srv::DynamicsConstraintsSrv::Request& constraints) {
+    mrs_lib::Routine profiler_routine =
+        profiler_.createRoutine("setConstraints");
+    mrs_lib::ScopeTimer timer =
+        mrs_lib::ScopeTimer(node_, "ControlManager::setConstraints",
+                            scope_timer_logger_, scope_timer_enabled_);
+
+    setConstraintsToTrackers(constraints);
+
+    setConstraintsToControllers(constraints);
+  }
+
+  //}
+
+  /* enforceControllerConstraints() //{ */
+
+  std::optional<mrs_msgs::srv::DynamicsConstraintsSrv::Request>
+  ControlManager::enforceControllersConstraints(
+      const mrs_msgs::srv::DynamicsConstraintsSrv::Request& constraints) {
+    // copy member variables
+    auto last_control_output =
+        mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
+
+    if (!last_control_output.control_output ||
+        !last_control_output.diagnostics.controller_enforcing_constraints) {
+      return {};
+    }
+
+    bool enforcing = false;
+
+    auto constraints_out = constraints;
+
     std::scoped_lock lock(mutex_tracker_list_);
 
-    // set callbacks to all trackers
-    for (int i = 0; i < int(tracker_list_.size()); i++) {
-      tracker_list_.at(i)->enableCallbacks(req_enable_callbacks);
+    // enforce horizontal speed
+    if (last_control_output.diagnostics.horizontal_speed_constraint <
+        constraints.constraints.horizontal_speed) {
+      constraints_out.constraints.horizontal_speed =
+          last_control_output.diagnostics.horizontal_speed_constraint;
+
+      enforcing = true;
     }
-  }
-}
 
-//}
+    // enforce horizontal acceleration
+    if (last_control_output.diagnostics.horizontal_acc_constraint <
+        constraints.constraints.horizontal_acceleration) {
+      constraints_out.constraints.horizontal_acceleration =
+          last_control_output.diagnostics.horizontal_acc_constraint;
 
-/* publishDiagnostics() //{ */
+      enforcing = true;
+    }
 
-void ControlManager::publishDiagnostics(void) {
-  if (!is_initialized_) {
-    return;
-  }
+    // enforce vertical ascending speed
+    if (last_control_output.diagnostics.vertical_asc_speed_constraint <
+        constraints.constraints.vertical_ascending_speed) {
+      constraints_out.constraints.vertical_ascending_speed =
+          last_control_output.diagnostics.vertical_asc_speed_constraint;
 
-  mrs_lib::Routine profiler_routine =
-      profiler_.createRoutine("publishDiagnostics");
-  mrs_lib::ScopeTimer timer =
-      mrs_lib::ScopeTimer(node_, "ControlManager::publishDiagnostics",
-                          scope_timer_logger_, scope_timer_enabled_);
+      enforcing = true;
+    }
 
-  mrs_msgs::msg::ControlManagerDiagnostics diagnostics_msg;
+    // enforce vertical ascending acceleration
+    if (last_control_output.diagnostics.vertical_asc_acc_constraint <
+        constraints.constraints.vertical_ascending_acceleration) {
+      constraints_out.constraints.vertical_ascending_acceleration =
+          last_control_output.diagnostics.vertical_asc_acc_constraint;
 
-  diagnostics_msg.stamp = clock_->now();
-  diagnostics_msg.uav_name = _uav_name_;
+      enforcing = true;
+    }
 
-  diagnostics_msg.desired_uav_state_rate = desired_uav_state_rate_;
+    // enforce vertical descending speed
+    if (last_control_output.diagnostics.vertical_desc_speed_constraint <
+        constraints.constraints.vertical_descending_speed) {
+      constraints_out.constraints.vertical_descending_speed =
+          last_control_output.diagnostics.vertical_desc_speed_constraint;
 
-  diagnostics_msg.output_enabled = output_enabled_;
+      enforcing = true;
+    }
 
-  diagnostics_msg.joystick_active = rc_goto_active_;
+    // enforce vertical descending acceleration
+    if (last_control_output.diagnostics.vertical_desc_acc_constraint <
+        constraints.constraints.vertical_descending_acceleration) {
+      constraints_out.constraints.vertical_descending_acceleration =
+          last_control_output.diagnostics.vertical_desc_acc_constraint;
 
-  diagnostics_msg.flying_normally = isFlyingNormally();
+      enforcing = true;
+    }
 
-  diagnostics_msg.bumper_active = bumper_repulsing_;
-
-  // | ----------------- fill the tracker status ---------------- |
-
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
-
-    mrs_msgs::msg::TrackerStatus tracker_status;
-
-    diagnostics_msg.active_tracker = _tracker_names_.at(active_tracker_idx_);
-    diagnostics_msg.tracker_status =
-        tracker_list_.at(active_tracker_idx_)->getStatus();
-  }
-
-  // | --------------- fill the controller status --------------- |
-
-  {
-    std::scoped_lock lock(mutex_controller_list_);
-
-    mrs_msgs::msg::ControllerStatus controller_status;
-
-    diagnostics_msg.active_controller =
-        _controller_names_.at(active_controller_idx_);
-    diagnostics_msg.controller_status =
-        controller_list_.at(active_controller_idx_)->getStatus();
-  }
-
-  // | ------------ fill in the available controllers ----------- |
-
-  for (int i = 0; i < int(_controller_names_.size()); i++) {
-    if ((_controller_names_.at(i) != _failsafe_controller_name_) &&
-        (_controller_names_.at(i) != _eland_controller_name_)) {
-      diagnostics_msg.available_controllers.push_back(_controller_names_.at(i));
-      diagnostics_msg.human_switchable_controllers.push_back(
-          controllers_.at(_controller_names_.at(i)).human_switchable);
+    if (enforcing) {
+      return {constraints_out};
+    } else {
+      return {};
     }
   }
 
-  // | ------------- fill in the available trackers ------------- |
+  //}
 
-  for (int i = 0; i < int(_tracker_names_.size()); i++) {
-    if (_tracker_names_.at(i) != _null_tracker_name_) {
-      diagnostics_msg.available_trackers.push_back(_tracker_names_.at(i));
-      diagnostics_msg.human_switchable_trackers.push_back(
-          trackers_.at(_tracker_names_.at(i)).human_switchable);
-    }
-  }
+  /* isFlyingNormally() //{ */
 
-  // | ------------------------- publish ------------------------ |
+  bool ControlManager::isFlyingNormally(void) {
+    auto active_controller_idx =
+        mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
+    auto active_tracker_idx =
+        mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
 
-  ph_diagnostics_.publish(diagnostics_msg);
-}
-
-//}
-
-/* setConstraintsToTrackers() //{ */
-
-void ControlManager::setConstraintsToTrackers(
-    const mrs_msgs::srv::DynamicsConstraintsSrv::Request& constraints) {
-  mrs_lib::Routine profiler_routine =
-      profiler_.createRoutine("setConstraintsToTrackers");
-  mrs_lib::ScopeTimer timer =
-      mrs_lib::ScopeTimer(node_, "ControlManager::setConstraintsToTrackers",
-                          scope_timer_logger_, scope_timer_enabled_);
-
-  std::shared_ptr<mrs_msgs::srv::DynamicsConstraintsSrv::Request> request =
-      std::make_shared<mrs_msgs::srv::DynamicsConstraintsSrv::Request>(
-          constraints);
-
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
-
-    // for each tracker
-    for (int i = 0; i < int(tracker_list_.size()); i++) {
-      // if it is the active one, update and retrieve the command
-      auto response = tracker_list_.at(i)->setConstraints(request);
-    }
-  }
-}
-
-//}
-
-/* setConstraintsToControllers() //{ */
-
-void ControlManager::setConstraintsToControllers(
-    const mrs_msgs::srv::DynamicsConstraintsSrv::Request& constraints) {
-  mrs_lib::Routine profiler_routine =
-      profiler_.createRoutine("setConstraintsToControllers");
-  mrs_lib::ScopeTimer timer =
-      mrs_lib::ScopeTimer(node_, "ControlManager::setConstraintsToControllers",
-                          scope_timer_logger_, scope_timer_enabled_);
-
-  std::shared_ptr<mrs_msgs::srv::DynamicsConstraintsSrv::Request> request =
-      std::make_shared<mrs_msgs::srv::DynamicsConstraintsSrv::Request>(
-          constraints);
-
-  {
-    std::scoped_lock lock(mutex_controller_list_);
-
-    // for each controller
-    for (int i = 0; i < int(controller_list_.size()); i++) {
-      // if it is the active one, update and retrieve the command
-      auto response = controller_list_.at(i)->setConstraints(request);
-    }
-  }
-}
-
-//}
-
-/* setConstraints() //{ */
-
-void ControlManager::setConstraints(
-    const mrs_msgs::srv::DynamicsConstraintsSrv::Request& constraints) {
-  mrs_lib::Routine profiler_routine = profiler_.createRoutine("setConstraints");
-  mrs_lib::ScopeTimer timer =
-      mrs_lib::ScopeTimer(node_, "ControlManager::setConstraints",
-                          scope_timer_logger_, scope_timer_enabled_);
-
-  setConstraintsToTrackers(constraints);
-
-  setConstraintsToControllers(constraints);
-}
-
-//}
-
-/* enforceControllerConstraints() //{ */
-
-std::optional<mrs_msgs::srv::DynamicsConstraintsSrv::Request>
-ControlManager::enforceControllersConstraints(
-    const mrs_msgs::srv::DynamicsConstraintsSrv::Request& constraints) {
-  // copy member variables
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-
-  if (!last_control_output.control_output ||
-      !last_control_output.diagnostics.controller_enforcing_constraints) {
-    return {};
-  }
-
-  bool enforcing = false;
-
-  auto constraints_out = constraints;
-
-  std::scoped_lock lock(mutex_tracker_list_);
-
-  // enforce horizontal speed
-  if (last_control_output.diagnostics.horizontal_speed_constraint <
-      constraints.constraints.horizontal_speed) {
-    constraints_out.constraints.horizontal_speed =
-        last_control_output.diagnostics.horizontal_speed_constraint;
-
-    enforcing = true;
-  }
-
-  // enforce horizontal acceleration
-  if (last_control_output.diagnostics.horizontal_acc_constraint <
-      constraints.constraints.horizontal_acceleration) {
-    constraints_out.constraints.horizontal_acceleration =
-        last_control_output.diagnostics.horizontal_acc_constraint;
-
-    enforcing = true;
-  }
-
-  // enforce vertical ascending speed
-  if (last_control_output.diagnostics.vertical_asc_speed_constraint <
-      constraints.constraints.vertical_ascending_speed) {
-    constraints_out.constraints.vertical_ascending_speed =
-        last_control_output.diagnostics.vertical_asc_speed_constraint;
-
-    enforcing = true;
-  }
-
-  // enforce vertical ascending acceleration
-  if (last_control_output.diagnostics.vertical_asc_acc_constraint <
-      constraints.constraints.vertical_ascending_acceleration) {
-    constraints_out.constraints.vertical_ascending_acceleration =
-        last_control_output.diagnostics.vertical_asc_acc_constraint;
-
-    enforcing = true;
-  }
-
-  // enforce vertical descending speed
-  if (last_control_output.diagnostics.vertical_desc_speed_constraint <
-      constraints.constraints.vertical_descending_speed) {
-    constraints_out.constraints.vertical_descending_speed =
-        last_control_output.diagnostics.vertical_desc_speed_constraint;
-
-    enforcing = true;
-  }
-
-  // enforce vertical descending acceleration
-  if (last_control_output.diagnostics.vertical_desc_acc_constraint <
-      constraints.constraints.vertical_descending_acceleration) {
-    constraints_out.constraints.vertical_descending_acceleration =
-        last_control_output.diagnostics.vertical_desc_acc_constraint;
-
-    enforcing = true;
-  }
-
-  if (enforcing) {
-    return {constraints_out};
-  } else {
-    return {};
-  }
-}
-
-//}
-
-/* isFlyingNormally() //{ */
-
-bool ControlManager::isFlyingNormally(void) {
-  auto active_controller_idx =
-      mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
-  auto active_tracker_idx =
-      mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
-
-  // clang-format off
+    // clang-format off
   return
       callbacks_enabled_
       && output_enabled_
@@ -7840,101 +7550,240 @@ bool ControlManager::isFlyingNormally(void) {
       && armed_
       && (_controller_names_.size() == 1 || ((active_controller_idx != _eland_controller_idx_) && (active_controller_idx != _failsafe_controller_idx_)))
       && (_tracker_names_.size() == 1 || ((active_tracker_idx != _null_tracker_idx_) && (active_tracker_idx != _landoff_tracker_idx_) && (active_tracker_idx != _ehover_tracker_idx_)));
-  // clang-format on
-}
-
-//}
-
-/* //{ getMass() */
-
-double ControlManager::getMass(void) {
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-
-  if (last_control_output.diagnostics.mass_estimator) {
-    return _uav_mass_ + last_control_output.diagnostics.mass_difference;
-  } else {
-    return _uav_mass_;
-  }
-}
-
-//}
-
-// | ----------------------- safety area ---------------------- |
-
-/* //{ isPointInSafetyArea3d() */
-
-bool ControlManager::isPointInSafetyArea3d(
-    const mrs_msgs::msg::ReferenceStamped& point) {
-  if (!use_safety_area_) {
-    return true;
+    // clang-format on
   }
 
-  auto tfed_horizontal =
-      transformer_->transformSingle(point, _safety_area_horizontal_frame_);
+  //}
 
-  if (!tfed_horizontal) {
-    RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                          "SafetyArea: Could not transform the point to the "
-                          "safety area horizontal frame");
-    return false;
+  /* //{ getMass() */
+
+  double ControlManager::getMass(void) {
+    auto last_control_output =
+        mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
+
+    if (last_control_output.diagnostics.mass_estimator) {
+      return _uav_mass_ + last_control_output.diagnostics.mass_difference;
+    } else {
+      return _uav_mass_;
+    }
   }
 
-  if (!safety_zone_->isPointValid(tfed_horizontal->reference.position.x,
-                                  tfed_horizontal->reference.position.y)) {
-    return false;
+  //}
+
+  // | ----------------------- safety area ---------------------- |
+
+  /* //{ isPointInSafetyArea3d() */
+  bool ControlManager::isPointInSafetyArea3d(
+      const mrs_msgs::msg::ReferenceStamped& point) {
+    std::shared_ptr<mrs_msgs::srv::ReferenceStampedSrv::Request> request =
+        std::make_shared<mrs_msgs::srv::ReferenceStampedSrv::Request>();
+
+    request->header = point.header;
+    request->reference = point.reference;
+
+    auto response = sch_point_in_safety_area_3d_.callSync(request);
+    if (!response) {
+      RCLCPP_WARN(node_->get_logger(),
+                  "SafetyArea: Service call to check if the point is in the "
+                  "safety area failed");
+      return false;
+    }
+    return response.value()->success;
   }
 
-  if (point.reference.position.z < getMinZ(point.header.frame_id) ||
-      point.reference.position.z > getMaxZ(point.header.frame_id)) {
-    return false;
-  }
+  //}
 
-  return true;
-}
+  /* //{ getClosestPointInSafetyArea3d() */
 
-//}
+  mrs_msgs::msg::ReferenceStamped ControlManager::getClosestPointInSafetyArea3d(
+      const mrs_msgs::msg::ReferenceStamped& point) {
+    mrs_msgs::msg::ReferenceStamped result = point;
 
-/* //{ getClosestPointInSafetyArea3d() */
+    if (!use_safety_area_) {
+      return result;
+    }
 
-mrs_msgs::msg::ReferenceStamped ControlManager::getClosestPointInSafetyArea3d(
-    const mrs_msgs::msg::ReferenceStamped& point) {
-  mrs_msgs::msg::ReferenceStamped result = point;
+    // Check if already inside
+    if (isPointInSafetyArea3d(point)) {
+      return result;
+    }
 
-  if (!use_safety_area_) {
+    // Transform to safety area horizontal frame
+    auto tfed_horizontal =
+        transformer_->transformSingle(point, _safety_area_horizontal_frame_);
+
+    if (!tfed_horizontal) {
+      RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                            "SafetyArea: Could not transform the point to the "
+                            "safety area horizontal frame");
+      return result;
+    }
+
+    // Get the polygon border
+    mrs_lib::safety_zone::Polygon border = safety_zone_->getBorder();
+    std::vector<geometry_msgs::msg::Point> border_points =
+        border.getPointMessageVector(0.0);
+
+    // Find closest point on the polygon border
+    double min_distance = std::numeric_limits<double>::max();
+    double closest_x = tfed_horizontal->reference.position.x;
+    double closest_y = tfed_horizontal->reference.position.y;
+
+    // If point is outside horizontally, project it onto the border
+    if (!safety_zone_->isPointValid(tfed_horizontal->reference.position.x,
+                                    tfed_horizontal->reference.position.y)) {
+      // Check distance to each edge of the polygon
+      for (size_t i = 0; i < border_points.size(); i++) {
+        size_t next_i = (i + 1) % border_points.size();
+
+        double x1 = border_points[i].x;
+        double y1 = border_points[i].y;
+        double x2 = border_points[next_i].x;
+        double y2 = border_points[next_i].y;
+
+        // Vector from point1 to point2
+        double edge_x = x2 - x1;
+        double edge_y = y2 - y1;
+
+        // Vector from point1 to our point
+        double to_point_x = tfed_horizontal->reference.position.x - x1;
+        double to_point_y = tfed_horizontal->reference.position.y - y1;
+
+        // Project onto the edge
+        double edge_length_sq = edge_x * edge_x + edge_y * edge_y;
+        double t = 0.0;
+
+        if (edge_length_sq > 1e-10) {
+          t = (to_point_x * edge_x + to_point_y * edge_y) / edge_length_sq;
+          t = std::max(0.0, std::min(1.0, t));  // Clamp to [0, 1]
+        }
+
+        // Closest point on this edge
+        double proj_x = x1 + t * edge_x;
+        double proj_y = y1 + t * edge_y;
+
+        // Distance to this projected point
+        double dx = tfed_horizontal->reference.position.x - proj_x;
+        double dy = tfed_horizontal->reference.position.y - proj_y;
+        double distance = std::sqrt(dx * dx + dy * dy);
+
+        if (distance < min_distance) {
+          min_distance = distance;
+          closest_x = proj_x;
+          closest_y = proj_y;
+        }
+      }
+
+      // Move the point slightly inward (1cm) to ensure it's inside
+      double center_x = 0.0;
+      double center_y = 0.0;
+      for (const auto& bp : border_points) {
+        center_x += bp.x;
+        center_y += bp.y;
+      }
+      center_x /= border_points.size();
+      center_y /= border_points.size();
+
+      double to_center_x = center_x - closest_x;
+      double to_center_y = center_y - closest_y;
+      double to_center_norm =
+          std::sqrt(to_center_x * to_center_x + to_center_y * to_center_y);
+
+      if (to_center_norm > 1e-6) {
+        closest_x += 0.01 * (to_center_x / to_center_norm);
+        closest_y += 0.01 * (to_center_y / to_center_norm);
+      }
+
+      tfed_horizontal->reference.position.x = closest_x;
+      tfed_horizontal->reference.position.y = closest_y;
+    }
+
+    // Transform back to original frame
+    auto result_in_original =
+        transformer_->transformSingle(*tfed_horizontal, point.header.frame_id);
+
+    if (result_in_original) {
+      result = *result_in_original;
+    }
+
+    // Clamp Z coordinate
+    double min_z = getMinZ(point.header.frame_id);
+    double max_z = getMaxZ(point.header.frame_id);
+
+    if (result.reference.position.z < min_z) {
+      result.reference.position.z = min_z;
+    } else if (result.reference.position.z > max_z) {
+      result.reference.position.z = max_z;
+    }
+
     return result;
   }
 
-  // Check if already inside
-  if (isPointInSafetyArea3d(point)) {
-    return result;
+  //}
+
+  /* //{ isPointInSafetyArea2d() */
+  bool ControlManager::isPointInSafetyArea2d(
+      const mrs_msgs::msg::ReferenceStamped& point) {
+    std::shared_ptr<mrs_msgs::srv::ReferenceStampedSrv::Request> request =
+        std::make_shared<mrs_msgs::srv::ReferenceStampedSrv::Request>();
+
+    request->header = point.header;
+    request->reference = point.reference;
+
+    auto response = sch_point_in_safety_area_2d_.callSync(request);
+    if (!response) {
+      RCLCPP_WARN(node_->get_logger(),
+                  "SafetyArea: Service call to check if the point is in the "
+                  "safety area failed");
+      return false;
+    }
+
+    return response.value()->success;
   }
 
-  // Transform to safety area horizontal frame
-  auto tfed_horizontal =
-      transformer_->transformSingle(point, _safety_area_horizontal_frame_);
+  //}
 
-  if (!tfed_horizontal) {
-    RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                          "SafetyArea: Could not transform the point to the "
-                          "safety area horizontal frame");
-    return result;
-  }
+  /* //{ getClosestPointInSafetyArea2d() */
 
-  // Get the polygon border
-  mrs_lib::safety_zone::Polygon border = safety_zone_->getBorder();
-  std::vector<geometry_msgs::msg::Point> border_points =
-      border.getPointMessageVector(0.0);
+  mrs_msgs::msg::ReferenceStamped ControlManager::getClosestPointInSafetyArea2d(
+      const mrs_msgs::msg::ReferenceStamped& point) {
+    mrs_msgs::msg::ReferenceStamped result = point;
 
-  // Find closest point on the polygon border
-  double min_distance = std::numeric_limits<double>::max();
-  double closest_x = tfed_horizontal->reference.position.x;
-  double closest_y = tfed_horizontal->reference.position.y;
+    // If safety area is disabled, return the original point
+    if (!use_safety_area_) {
+      return result;
+    }
 
-  // If point is outside horizontally, project it onto the border
-  if (!safety_zone_->isPointValid(tfed_horizontal->reference.position.x,
-                                  tfed_horizontal->reference.position.y)) {
-    // Check distance to each edge of the polygon
+    // Transform point to safety area horizontal frame
+    auto tfed_horizontal =
+        transformer_->transformSingle(point, _safety_area_horizontal_frame_);
+
+    if (!tfed_horizontal) {
+      RCLCPP_ERROR_THROTTLE(
+          node_->get_logger(), *clock_, 1000,
+          "SafetyArea: Could not transform the point to the "
+          "safety area horizontal frame in getClosestPointInSafetyArea2d");
+      return result;
+    }
+
+    double px = tfed_horizontal->reference.position.x;
+    double py = tfed_horizontal->reference.position.y;
+
+    // If point is already inside, return it
+    if (safety_zone_->isPointValid(px, py)) {
+      return result;
+    }
+
+    // Point is outside - find closest point on the boundary
+    mrs_lib::safety_zone::Polygon border = safety_zone_->getBorder();
+    std::vector<geometry_msgs::msg::Point> border_points =
+        border.getPointMessageVector(0.0);
+
+    double closest_x = px;
+    double closest_y = py;
+    double min_distance = std::numeric_limits<double>::max();
+
+    // Iterate through all edges of the polygon
     for (size_t i = 0; i < border_points.size(); i++) {
       size_t next_i = (i + 1) % border_points.size();
 
@@ -7943,30 +7792,29 @@ mrs_msgs::msg::ReferenceStamped ControlManager::getClosestPointInSafetyArea3d(
       double x2 = border_points[next_i].x;
       double y2 = border_points[next_i].y;
 
-      // Vector from point1 to point2
+      // Vector from point1 to point2 of the edge
       double edge_x = x2 - x1;
       double edge_y = y2 - y1;
-
-      // Vector from point1 to our point
-      double to_point_x = tfed_horizontal->reference.position.x - x1;
-      double to_point_y = tfed_horizontal->reference.position.y - y1;
-
-      // Project onto the edge
       double edge_length_sq = edge_x * edge_x + edge_y * edge_y;
-      double t = 0.0;
 
+      // Vector from point1 to query point
+      double to_point_x = px - x1;
+      double to_point_y = py - y1;
+
+      // Project query point onto the edge (clamped to [0, 1])
+      double t = 0.0;
       if (edge_length_sq > 1e-10) {
         t = (to_point_x * edge_x + to_point_y * edge_y) / edge_length_sq;
-        t = std::max(0.0, std::min(1.0, t));  // Clamp to [0, 1]
+        t = std::max(0.0, std::min(1.0, t));
       }
 
       // Closest point on this edge
       double proj_x = x1 + t * edge_x;
       double proj_y = y1 + t * edge_y;
 
-      // Distance to this projected point
-      double dx = tfed_horizontal->reference.position.x - proj_x;
-      double dy = tfed_horizontal->reference.position.y - proj_y;
+      // Distance from query point to projected point
+      double dx = px - proj_x;
+      double dy = py - proj_y;
       double distance = std::sqrt(dx * dx + dy * dy);
 
       if (distance < min_distance) {
@@ -7976,534 +7824,457 @@ mrs_msgs::msg::ReferenceStamped ControlManager::getClosestPointInSafetyArea3d(
       }
     }
 
-    // Move the point slightly inward (1cm) to ensure it's inside
-    double center_x = 0.0;
-    double center_y = 0.0;
-    for (const auto& bp : border_points) {
-      center_x += bp.x;
-      center_y += bp.y;
-    }
-    center_x /= border_points.size();
-    center_y /= border_points.size();
-
-    double to_center_x = center_x - closest_x;
-    double to_center_y = center_y - closest_y;
-    double to_center_norm =
-        std::sqrt(to_center_x * to_center_x + to_center_y * to_center_y);
-
-    if (to_center_norm > 1e-6) {
-      closest_x += 0.01 * (to_center_x / to_center_norm);
-      closest_y += 0.01 * (to_center_y / to_center_norm);
+    // Nudge the point slightly inward (1cm) to ensure it's safely inside
+    if (min_distance > 1e-6) {
+      double nudge = 0.01;  // 1cm
+      double dx = px - closest_x;
+      double dy = py - closest_y;
+      double dist = std::sqrt(dx * dx + dy * dy);
+      if (dist > nudge) {
+        closest_x += (dx / dist) * nudge;
+        closest_y += (dy / dist) * nudge;
+      }
     }
 
-    tfed_horizontal->reference.position.x = closest_x;
-    tfed_horizontal->reference.position.y = closest_y;
-  }
-
-  // Transform back to original frame
-  auto result_in_original =
-      transformer_->transformSingle(*tfed_horizontal, point.header.frame_id);
-
-  if (result_in_original) {
-    result = *result_in_original;
-  }
-
-  // Clamp Z coordinate
-  double min_z = getMinZ(point.header.frame_id);
-  double max_z = getMaxZ(point.header.frame_id);
-
-  if (result.reference.position.z < min_z) {
-    result.reference.position.z = min_z;
-  } else if (result.reference.position.z > max_z) {
-    result.reference.position.z = max_z;
-  }
-
-  return result;
-}
-
-//}
-
-/* //{ isPointInSafetyArea2d() */
-
-bool ControlManager::isPointInSafetyArea2d(
-    const mrs_msgs::msg::ReferenceStamped& point) {
-  if (!use_safety_area_) {
-    return true;
-  }
-
-  auto tfed_horizontal =
-      transformer_->transformSingle(point, _safety_area_horizontal_frame_);
-
-  if (!tfed_horizontal) {
-    RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                          "SafetyArea: Could not transform the point to the "
-                          "safety area horizontal frame");
-    return false;
-  }
-
-  if (!safety_zone_->isPointValid(tfed_horizontal->reference.position.x,
-                                  tfed_horizontal->reference.position.y)) {
-    return false;
-  }
-
-  return true;
-}
-
-//}
-
-/* //{ getClosestPointInSafetyArea2d() */
-
-mrs_msgs::msg::ReferenceStamped ControlManager::getClosestPointInSafetyArea2d(
-    const mrs_msgs::msg::ReferenceStamped& point) {
-  mrs_msgs::msg::ReferenceStamped result = point;
-
-  // If safety area is disabled, return the original point
-  if (!use_safety_area_) {
-    return result;
-  }
-
-  // Transform point to safety area horizontal frame
-  auto tfed_horizontal =
-      transformer_->transformSingle(point, _safety_area_horizontal_frame_);
-
-  if (!tfed_horizontal) {
-    RCLCPP_ERROR_THROTTLE(
-        node_->get_logger(), *clock_, 1000,
-        "SafetyArea: Could not transform the point to the "
-        "safety area horizontal frame in getClosestPointInSafetyArea2d");
-    return result;
-  }
-
-  double px = tfed_horizontal->reference.position.x;
-  double py = tfed_horizontal->reference.position.y;
-
-  // If point is already inside, return it
-  if (safety_zone_->isPointValid(px, py)) {
-    return result;
-  }
-
-  // Point is outside - find closest point on the boundary
-  mrs_lib::safety_zone::Polygon border = safety_zone_->getBorder();
-  std::vector<geometry_msgs::msg::Point> border_points =
-      border.getPointMessageVector(0.0);
-
-  double closest_x = px;
-  double closest_y = py;
-  double min_distance = std::numeric_limits<double>::max();
-
-  // Iterate through all edges of the polygon
-  for (size_t i = 0; i < border_points.size(); i++) {
-    size_t next_i = (i + 1) % border_points.size();
-
-    double x1 = border_points[i].x;
-    double y1 = border_points[i].y;
-    double x2 = border_points[next_i].x;
-    double y2 = border_points[next_i].y;
-
-    // Vector from point1 to point2 of the edge
-    double edge_x = x2 - x1;
-    double edge_y = y2 - y1;
-    double edge_length_sq = edge_x * edge_x + edge_y * edge_y;
-
-    // Vector from point1 to query point
-    double to_point_x = px - x1;
-    double to_point_y = py - y1;
-
-    // Project query point onto the edge (clamped to [0, 1])
-    double t = 0.0;
-    if (edge_length_sq > 1e-10) {
-      t = (to_point_x * edge_x + to_point_y * edge_y) / edge_length_sq;
-      t = std::max(0.0, std::min(1.0, t));
-    }
-
-    // Closest point on this edge
-    double proj_x = x1 + t * edge_x;
-    double proj_y = y1 + t * edge_y;
-
-    // Distance from query point to projected point
-    double dx = px - proj_x;
-    double dy = py - proj_y;
-    double distance = std::sqrt(dx * dx + dy * dy);
-
-    if (distance < min_distance) {
-      min_distance = distance;
-      closest_x = proj_x;
-      closest_y = proj_y;
-    }
-  }
-
-  // Nudge the point slightly inward (1cm) to ensure it's safely inside
-  if (min_distance > 1e-6) {
-    double nudge = 0.01;  // 1cm
-    double dx = px - closest_x;
-    double dy = py - closest_y;
-    double dist = std::sqrt(dx * dx + dy * dy);
-    if (dist > nudge) {
-      closest_x += (dx / dist) * nudge;
-      closest_y += (dy / dist) * nudge;
-    }
-  }
-
-  // Create corrected point in safety area frame
-  mrs_msgs::msg::ReferenceStamped corrected_horizontal = *tfed_horizontal;
-  corrected_horizontal.reference.position.x = closest_x;
-  corrected_horizontal.reference.position.y = closest_y;
-
-  // Transform back to original frame
-  auto tfed_back = transformer_->transformSingle(corrected_horizontal,
-                                                 point.header.frame_id);
-
-  if (!tfed_back) {
-    RCLCPP_ERROR_THROTTLE(
-        node_->get_logger(), *clock_, 1000,
-        "SafetyArea: Could not transform corrected point back "
-        "to original frame in getClosestPointInSafetyArea2d");
-    return result;
-  }
-
-  return *tfed_back;
-}
-
-//}
-
-/* //{ isPathToPointInSafetyArea3d() */
-
-bool ControlManager::isPathToPointInSafetyArea3d(
-    const mrs_msgs::msg::ReferenceStamped& start,
-    const mrs_msgs::msg::ReferenceStamped& end) {
-  if (!use_safety_area_) {
-    return true;
-  }
-
-  if (!isPointInSafetyArea3d(start) || !isPointInSafetyArea3d(end)) {
-    return false;
-  }
-
-  mrs_msgs::msg::ReferenceStamped start_transformed, end_transformed;
-
-  {
-    auto ret =
-        transformer_->transformSingle(start, _safety_area_horizontal_frame_);
-
-    if (!ret) {
-      RCLCPP_ERROR(
-          node_->get_logger(),
-          "SafetyArea: Could not transform the first point in the path");
-
-      return false;
-    }
-
-    start_transformed = ret.value();
-  }
-
-  {
-    auto ret =
-        transformer_->transformSingle(end, _safety_area_horizontal_frame_);
-
-    if (!ret) {
-      RCLCPP_ERROR(
-          node_->get_logger(),
-          "SafetyArea: Could not transform the first point in the path");
-
-      return false;
-    }
-
-    end_transformed = ret.value();
-  }
-
-  return safety_zone_->isPathValid(start_transformed.reference.position.x,
-                                   start_transformed.reference.position.y,
-                                   end_transformed.reference.position.x,
-                                   end_transformed.reference.position.y);
-}
-
-//}
-
-/* //{ isPathToPointInSafetyArea2d() */
-
-bool ControlManager::isPathToPointInSafetyArea2d(
-    const mrs_msgs::msg::ReferenceStamped& start,
-    const mrs_msgs::msg::ReferenceStamped& end) {
-  if (!use_safety_area_) {
-    return true;
-  }
-
-  mrs_msgs::msg::ReferenceStamped start_transformed, end_transformed;
-
-  if (!isPointInSafetyArea2d(start) || !isPointInSafetyArea2d(end)) {
-    return false;
-  }
-
-  {
-    auto ret =
-        transformer_->transformSingle(start, _safety_area_horizontal_frame_);
-
-    if (!ret) {
-      RCLCPP_ERROR(
-          node_->get_logger(),
-          "SafetyArea: Could not transform the first point in the path");
-
-      return false;
-    }
-
-    start_transformed = ret.value();
-  }
-
-  {
-    auto ret =
-        transformer_->transformSingle(end, _safety_area_horizontal_frame_);
-
-    if (!ret) {
-      RCLCPP_ERROR(
-          node_->get_logger(),
-          "SafetyArea: Could not transform the first point in the path");
-
-      return false;
-    }
-
-    end_transformed = ret.value();
-  }
-
-  return safety_zone_->isPathValid(start_transformed.reference.position.x,
-                                   start_transformed.reference.position.y,
-                                   end_transformed.reference.position.x,
-                                   end_transformed.reference.position.y);
-}
-
-//}
-
-/* //{ getMaxZ() */
-
-double ControlManager::getMaxZ(const std::string& frame_id) {
-  // | ------- first, calculate max_z from the safety area ------ |
-
-  double safety_area_max_z = std::numeric_limits<float>::max();
-
-  {
-    geometry_msgs::msg::PointStamped point;
-
-    point.header.frame_id = _safety_area_vertical_frame_;
-    point.point.x = 0;
-    point.point.y = 0;
-    point.point.z = _safety_area_max_z_;
-
-    auto ret = transformer_->transformSingle(point, frame_id);
-
-    if (!ret) {
+    // Create corrected point in safety area frame
+    mrs_msgs::msg::ReferenceStamped corrected_horizontal = *tfed_horizontal;
+    corrected_horizontal.reference.position.x = closest_x;
+    corrected_horizontal.reference.position.y = closest_y;
+
+    // Transform back to original frame
+    auto tfed_back = transformer_->transformSingle(corrected_horizontal,
+                                                   point.header.frame_id);
+
+    if (!tfed_back) {
       RCLCPP_ERROR_THROTTLE(
           node_->get_logger(), *clock_, 1000,
-          "SafetyArea: Could not transform safety area's max_z to '%s'",
-          frame_id.c_str());
+          "SafetyArea: Could not transform corrected point back "
+          "to original frame in getClosestPointInSafetyArea2d");
+      return result;
     }
 
-    safety_area_max_z = ret->point.z;
+    return *tfed_back;
   }
 
-  // | ------------ overwrite from estimation manager ----------- |
+  //}
 
-  double estimation_manager_max_z = std::numeric_limits<float>::max();
+  /* //{ isPathToPointInSafetyArea3d() */
+  bool ControlManager::isPathToPointInSafetyArea3d(
+      const mrs_msgs::msg::ReferenceStamped& start,
+      const mrs_msgs::msg::ReferenceStamped& end) {
+    std::shared_ptr<mrs_msgs::srv::ValidatePathToPointSrv::Request> request =
+        std::make_shared<mrs_msgs::srv::ValidatePathToPointSrv::Request>();
 
-  {
-    // if possible, override it with max z from the estimation manager
-    if (sh_max_z_.hasMsg()) {
-      auto msg = sh_max_z_.getMsg();
+    request->start.header = start.header;
+    request->start.point = start.reference.position;
 
-      // transform it into the safety area frame
+    request->end.header = end.header;
+    request->end.point = end.reference.position;
+
+    auto response = sch_path_to_point_in_safety_area_3d_.callSync(request);
+    if (!response) {
+      RCLCPP_WARN(node_->get_logger(),
+                  "SafetyArea: Service call to check if the point is in the "
+                  "safety area failed");
+      return false;
+    }
+    return response.value()->success;
+  }
+
+  //}
+
+  /* //{ isPathToPointInSafetyArea2d() */
+  bool ControlManager::isPathToPointInSafetyArea2d(
+      const mrs_msgs::msg::ReferenceStamped& start,
+      const mrs_msgs::msg::ReferenceStamped& end) {
+    std::shared_ptr<mrs_msgs::srv::ValidatePathToPointSrv::Request> request =
+        std::make_shared<mrs_msgs::srv::ValidatePathToPointSrv::Request>();
+    request->start.header = start.header;
+    request->start.point = start.reference.position;
+
+    request->end.header = end.header;
+    request->end.point = end.reference.position;
+
+    auto response = sch_path_to_point_in_safety_area_2d_.callSync(request);
+    if (!response) {
+      RCLCPP_WARN(node_->get_logger(),
+                  "SafetyArea: Service call to check if the point is in the "
+                  "safety area failed");
+      return false;
+    }
+    return response.value()->success;
+  }
+
+  //}
+
+  /* //{ getMaxZ() */
+
+  double ControlManager::getMaxZ(const std::string& frame_id) {
+    double safety_area_max_z = std::numeric_limits<float>::max();
+
+    {
+      // | ------- first, get max_z from the safety area ------ |
+      std::shared_ptr<mrs_msgs::srv::GetReferenceStampedSrv::Request> request =
+          std::make_shared<mrs_msgs::srv::GetReferenceStampedSrv::Request>();
+
+      auto response = sch_get_max_z_.callSync(request);
+
+      if (!response) {
+        RCLCPP_WARN(node_->get_logger(),
+                    "SafetyArea: Service call to get max_z from the safety "
+                    "area timed out");
+      } else {
+        geometry_msgs::msg::PointStamped point;
+        point.header = response.value()->reference.header;
+        point.point.x = 0;
+        point.point.y = 0;
+        point.point.z = response.value()->reference.reference.position.z;
+        auto ret = transformer_->transformSingle(point, frame_id);
+
+        if (!ret) {
+          RCLCPP_WARN(
+              node_->get_logger(),
+              "SafetyArea: Could not transform safety area's max_z to '%s'",
+              frame_id.c_str());
+        }
+        safety_area_max_z = ret->point.z;
+      }
+    }
+
+    // | ------------ overwrite from estimation manager ----------- |
+
+    double estimation_manager_max_z = std::numeric_limits<float>::max();
+
+    {
+      // if possible, override it with max z from the estimation manager
+      if (sh_max_z_.hasMsg()) {
+        auto msg = sh_max_z_.getMsg();
+
+        // transform it into the safety area frame
+        geometry_msgs::msg::PointStamped point;
+        point.header = msg->header;
+        point.point.x = 0;
+        point.point.y = 0;
+        point.point.z = msg->value;
+
+        auto ret = transformer_->transformSingle(point, frame_id);
+
+        if (!ret) {
+          RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                "SafetyArea: Could not transform estimation "
+                                "manager's max_z to the current control frame");
+        }
+
+        estimation_manager_max_z = ret->point.z;
+      }
+    }
+
+    if (estimation_manager_max_z < safety_area_max_z) {
+      return estimation_manager_max_z;
+    } else {
+      return safety_area_max_z;
+    }
+  }
+
+  //}
+
+  /* //{ getMinZ() */
+
+  double ControlManager::getMinZ(const std::string& frame_id) {
+    {
+      std::shared_ptr<mrs_msgs::srv::GetReferenceStampedSrv::Request> request =
+          std::make_shared<mrs_msgs::srv::GetReferenceStampedSrv::Request>();
+
+      auto response = sch_get_min_z_.callSync(request);
+
+      if (!response) {
+        RCLCPP_WARN(node_->get_logger(),
+                    "SafetyArea: Service call to get min_z from the safety "
+                    "area timed out");
+        return std::numeric_limits<double>::lowest();
+      }
+
       geometry_msgs::msg::PointStamped point;
-      point.header = msg->header;
+      point.header = response.value()->reference.header;
       point.point.x = 0;
       point.point.y = 0;
-      point.point.z = msg->value;
-
+      point.point.z = response.value()->reference.reference.position.z;
       auto ret = transformer_->transformSingle(point, frame_id);
 
       if (!ret) {
-        RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                              "SafetyArea: Could not transform estimation "
-                              "manager's max_z to the current control frame");
+        RCLCPP_WARN(
+            node_->get_logger(),
+            "SafetyArea: Could not transform safety area's min_z to '%s'",
+            frame_id.c_str());
+        return std::numeric_limits<double>::lowest();
       }
 
-      estimation_manager_max_z = ret->point.z;
+      return ret->point.z;
     }
   }
 
-  if (estimation_manager_max_z < safety_area_max_z) {
-    return estimation_manager_max_z;
-  } else {
-    return safety_area_max_z;
-  }
-}
+  //}
 
-//}
+  // | --------------------- obstacle bumper -------------------- |
 
-/* //{ getMinZ() */
+  /* bumperPushFromObstacle() //{ */
 
-double ControlManager::getMinZ(const std::string& frame_id) {
-  if (!use_safety_area_) {
-    return std::numeric_limits<double>::lowest();
-  }
+  void ControlManager::bumperPushFromObstacle(void) {
+    // | --------------- fabricate the min distances -------------- |
 
-  geometry_msgs::msg::PointStamped point;
+    double min_distance_horizontal = _bumper_horizontal_distance_;
+    double min_distance_vertical = _bumper_vertical_distance_;
 
-  point.header.frame_id = _safety_area_vertical_frame_;
-  point.point.x = 0;
-  point.point.y = 0;
-  point.point.z = _safety_area_min_z_;
+    if (_bumper_horizontal_derive_from_dynamics_ ||
+        _bumper_vertical_derive_from_dynamics_) {
+      auto constraints =
+          mrs_lib::get_mutexed(mutex_constraints_, current_constraints_);
 
-  auto ret = transformer_->transformSingle(point, frame_id);
+      if (_bumper_horizontal_derive_from_dynamics_) {
+        const double horizontal_t_stop =
+            constraints.constraints.horizontal_speed /
+            constraints.constraints.horizontal_acceleration;
+        const double horizontal_stop_dist =
+            (horizontal_t_stop * constraints.constraints.horizontal_speed) /
+            2.0;
 
-  if (!ret) {
-    RCLCPP_ERROR_THROTTLE(
-        node_->get_logger(), *clock_, 1000,
-        "SafetyArea: Could not transform safety area's min_z to '%s'",
-        frame_id.c_str());
-    return std::numeric_limits<double>::lowest();
-  }
+        min_distance_horizontal += 1.5 * horizontal_stop_dist;
+      }
 
-  return ret->point.z;
-}
+      if (_bumper_vertical_derive_from_dynamics_) {
+        // larger from the two accelerations
+        const double vert_acc =
+            constraints.constraints.vertical_ascending_acceleration >
+                    constraints.constraints.vertical_descending_acceleration
+                ? constraints.constraints.vertical_ascending_acceleration
+                : constraints.constraints.vertical_descending_acceleration;
 
-//}
+        // larger from the two speeds
+        const double vert_speed =
+            constraints.constraints.vertical_ascending_speed >
+                    constraints.constraints.vertical_descending_speed
+                ? constraints.constraints.vertical_ascending_speed
+                : constraints.constraints.vertical_descending_speed;
 
-// | --------------------- obstacle bumper -------------------- |
+        const double vertical_t_stop = vert_speed / vert_acc;
+        const double vertical_stop_dist = (vertical_t_stop * vert_speed) / 2.0;
 
-/* bumperPushFromObstacle() //{ */
-
-void ControlManager::bumperPushFromObstacle(void) {
-  // | --------------- fabricate the min distances -------------- |
-
-  double min_distance_horizontal = _bumper_horizontal_distance_;
-  double min_distance_vertical = _bumper_vertical_distance_;
-
-  if (_bumper_horizontal_derive_from_dynamics_ ||
-      _bumper_vertical_derive_from_dynamics_) {
-    auto constraints =
-        mrs_lib::get_mutexed(mutex_constraints_, current_constraints_);
-
-    if (_bumper_horizontal_derive_from_dynamics_) {
-      const double horizontal_t_stop =
-          constraints.constraints.horizontal_speed /
-          constraints.constraints.horizontal_acceleration;
-      const double horizontal_stop_dist =
-          (horizontal_t_stop * constraints.constraints.horizontal_speed) / 2.0;
-
-      min_distance_horizontal += 1.5 * horizontal_stop_dist;
+        min_distance_vertical += 1.5 * vertical_stop_dist;
+      }
     }
 
-    if (_bumper_vertical_derive_from_dynamics_) {
-      // larger from the two accelerations
-      const double vert_acc =
-          constraints.constraints.vertical_ascending_acceleration >
-                  constraints.constraints.vertical_descending_acceleration
-              ? constraints.constraints.vertical_ascending_acceleration
-              : constraints.constraints.vertical_descending_acceleration;
+    // | ----------------------------  ---------------------------- |
 
-      // larger from the two speeds
-      const double vert_speed =
-          constraints.constraints.vertical_ascending_speed >
-                  constraints.constraints.vertical_descending_speed
-              ? constraints.constraints.vertical_ascending_speed
-              : constraints.constraints.vertical_descending_speed;
+    // copy member variables
+    mrs_msgs::msg::ObstacleSectors::ConstSharedPtr bumper_data =
+        sh_bumper_.getMsg();
+    auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
 
-      const double vertical_t_stop = vert_speed / vert_acc;
-      const double vertical_stop_dist = (vertical_t_stop * vert_speed) / 2.0;
+    double sector_size = TAU / double(bumper_data->n_horizontal_sectors);
 
-      min_distance_vertical += 1.5 * vertical_stop_dist;
-    }
-  }
+    double direction = 0;
+    double repulsion_distance = std::numeric_limits<double>::max();
 
-  // | ----------------------------  ---------------------------- |
+    bool horizontal_collision_detected = false;
+    bool vertical_collision_detected = false;
 
-  // copy member variables
-  mrs_msgs::msg::ObstacleSectors::ConstSharedPtr bumper_data =
-      sh_bumper_.getMsg();
-  auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
+    double min_horizontal_sector_distance = std::numeric_limits<double>::max();
+    size_t min_sector_id = 0;
 
-  double sector_size = TAU / double(bumper_data->n_horizontal_sectors);
+    for (unsigned long i = 0; i < bumper_data->n_horizontal_sectors; i++) {
+      if (bumper_data->sectors.at(i) < 0) {
+        continue;
+      }
 
-  double direction = 0;
-  double repulsion_distance = std::numeric_limits<double>::max();
-
-  bool horizontal_collision_detected = false;
-  bool vertical_collision_detected = false;
-
-  double min_horizontal_sector_distance = std::numeric_limits<double>::max();
-  size_t min_sector_id = 0;
-
-  for (unsigned long i = 0; i < bumper_data->n_horizontal_sectors; i++) {
-    if (bumper_data->sectors.at(i) < 0) {
-      continue;
+      if (bumper_data->sectors.at(i) < min_horizontal_sector_distance) {
+        min_horizontal_sector_distance = bumper_data->sectors.at(i);
+        min_sector_id = i;
+      }
     }
 
-    if (bumper_data->sectors.at(i) < min_horizontal_sector_distance) {
-      min_horizontal_sector_distance = bumper_data->sectors.at(i);
-      min_sector_id = i;
+    // if the sector is under the threshold distance
+    if (min_horizontal_sector_distance < min_distance_horizontal) {
+      // get the desired direction of motion
+      double oposite_direction = double(min_sector_id) * sector_size + M_PI;
+      int oposite_sector_idx =
+          bumperGetSectorId(cos(oposite_direction), sin(oposite_direction), 0);
+
+      // get the id of the oposite sector
+      direction = oposite_direction;
+
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                           "Bumper: found potential collision (sector %lu vs. "
+                           "%d), obstacle distance: %.2f, repulsing",
+                           min_sector_id, oposite_sector_idx,
+                           bumper_data->sectors.at(min_sector_id));
+
+      repulsion_distance = min_distance_horizontal +
+                           _bumper_horizontal_overshoot_ -
+                           bumper_data->sectors.at(min_sector_id);
+
+      horizontal_collision_detected = true;
     }
-  }
 
-  // if the sector is under the threshold distance
-  if (min_horizontal_sector_distance < min_distance_horizontal) {
-    // get the desired direction of motion
-    double oposite_direction = double(min_sector_id) * sector_size + M_PI;
-    int oposite_sector_idx =
-        bumperGetSectorId(cos(oposite_direction), sin(oposite_direction), 0);
+    double vertical_repulsion_distance = 0;
 
-    // get the id of the oposite sector
-    direction = oposite_direction;
+    // check for vertical collision down
+    if (bumper_data->sectors.at(bumper_data->n_horizontal_sectors) > 0 &&
+        bumper_data->sectors.at(bumper_data->n_horizontal_sectors) <=
+            min_distance_vertical) {
+      RCLCPP_INFO_THROTTLE(
+          node_->get_logger(), *clock_, 1000,
+          "Bumper: potential collision below, obstacle distance: %.2f, limit: "
+          "%.2f",
+          bumper_data->sectors.at(bumper_data->n_horizontal_sectors),
+          min_distance_vertical);
+      vertical_collision_detected = true;
+      vertical_repulsion_distance =
+          min_distance_vertical -
+          bumper_data->sectors.at(bumper_data->n_horizontal_sectors) +
+          _bumper_vertical_overshoot_;
+    }
 
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                         "Bumper: found potential collision (sector %lu vs. "
-                         "%d), obstacle distance: %.2f, repulsing",
-                         min_sector_id, oposite_sector_idx,
-                         bumper_data->sectors.at(min_sector_id));
+    // check for vertical collision up
+    if (bumper_data->sectors.at(bumper_data->n_horizontal_sectors + 1) > 0 &&
+        bumper_data->sectors.at(bumper_data->n_horizontal_sectors + 1) <=
+            min_distance_vertical) {
+      RCLCPP_INFO_THROTTLE(
+          node_->get_logger(), *clock_, 1000,
+          "Bumper: potential collision above, obstacle distance: %.2f, limit: "
+          "%.2f",
+          bumper_data->sectors.at(bumper_data->n_horizontal_sectors + 1),
+          min_distance_vertical);
+      vertical_collision_detected = true;
+      vertical_repulsion_distance =
+          -(min_distance_vertical -
+            bumper_data->sectors.at(bumper_data->n_horizontal_sectors + 1) +
+            _bumper_vertical_overshoot_);
+    }
 
-    repulsion_distance = min_distance_horizontal +
-                         _bumper_horizontal_overshoot_ -
-                         bumper_data->sectors.at(min_sector_id);
+    // if potential collision was detected and we should start the repulsing_
+    if (horizontal_collision_detected || vertical_collision_detected) {
+      if (!bumper_repulsing_) {
+        if (_bumper_switch_tracker_) {
+          auto active_tracker_idx =
+              mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
+          std::string active_tracker_name =
+              _tracker_names_.at(active_tracker_idx);
 
-    horizontal_collision_detected = true;
-  }
+          // remember the previously active tracker
+          bumper_previous_tracker_ = active_tracker_name;
 
-  double vertical_repulsion_distance = 0;
+          if (active_tracker_name != _bumper_tracker_name_) {
+            switchTracker(_bumper_tracker_name_);
+          }
+        }
 
-  // check for vertical collision down
-  if (bumper_data->sectors.at(bumper_data->n_horizontal_sectors) > 0 &&
-      bumper_data->sectors.at(bumper_data->n_horizontal_sectors) <=
-          min_distance_vertical) {
-    RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000,
-                         "Bumper: potential collision below");
-    vertical_collision_detected = true;
-    vertical_repulsion_distance =
-        min_distance_vertical -
-        bumper_data->sectors.at(bumper_data->n_horizontal_sectors);
-  }
+        if (_bumper_switch_controller_) {
+          auto active_controller_idx = mrs_lib::get_mutexed(
+              mutex_controller_list_, active_controller_idx_);
+          std::string active_controller_name =
+              _controller_names_.at(active_controller_idx);
 
-  // check for vertical collision up
-  if (bumper_data->sectors.at(bumper_data->n_horizontal_sectors + 1) > 0 &&
-      bumper_data->sectors.at(bumper_data->n_horizontal_sectors + 1) <=
-          min_distance_vertical) {
-    RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000,
-                         "Bumper: potential collision above");
-    vertical_collision_detected = true;
-    vertical_repulsion_distance =
-        -(min_distance_vertical -
-          bumper_data->sectors.at(bumper_data->n_horizontal_sectors + 1));
-  }
+          // remember the previously active controller
+          bumper_previous_controller_ = active_controller_name;
 
-  // if potential collision was detected and we should start the repulsing_
-  if (horizontal_collision_detected || vertical_collision_detected) {
-    if (!bumper_repulsing_) {
+          if (active_controller_name != _bumper_controller_name_) {
+            switchController(_bumper_controller_name_);
+          }
+        }
+      }
+
+      bumper_repulsing_ = true;
+
+      callbacks_enabled_ = false;
+
+      std::shared_ptr<std_srvs::srv::SetBool::Request> req_enable_callbacks =
+          std::make_shared<std_srvs::srv::SetBool::Request>();
+
+      // create the reference in the fcu_untilted frame
+      mrs_msgs::msg::ReferenceStamped reference_fcu_untilted;
+
+      reference_fcu_untilted.header.frame_id = "fcu_untilted";
+
+      if (horizontal_collision_detected) {
+        reference_fcu_untilted.reference.position.x =
+            cos(direction) * repulsion_distance;
+        reference_fcu_untilted.reference.position.y =
+            sin(direction) * repulsion_distance;
+      } else {
+        reference_fcu_untilted.reference.position.x = 0;
+        reference_fcu_untilted.reference.position.y = 0;
+      }
+
+      reference_fcu_untilted.reference.heading = 0;
+
+      if (vertical_collision_detected) {
+        reference_fcu_untilted.reference.position.z =
+            vertical_repulsion_distance;
+      } else {
+        reference_fcu_untilted.reference.position.z = 0;
+      }
+
+      {
+        std::scoped_lock lock(mutex_tracker_list_);
+
+        // transform the reference into the currently used frame
+        // this is under the mutex_tracker_list since we don't won't the
+        // odometry switch to happen to the tracker before we actually call the
+        // goto service
+
+        auto ret = transformer_->transformSingle(reference_fcu_untilted,
+                                                 uav_state.header.frame_id);
+
+        if (!ret) {
+          RCLCPP_WARN_THROTTLE(
+              node_->get_logger(), *clock_, 1000,
+              "Bumper: bumper reference could not be transformed");
+          return;
+        }
+
+        reference_fcu_untilted = ret.value();
+
+        // copy the reference into the service type message
+        std::shared_ptr<mrs_msgs::srv::ReferenceSrv::Request> req_goto_out =
+            std::make_shared<mrs_msgs::srv::ReferenceSrv::Request>();
+        req_goto_out->reference = reference_fcu_untilted.reference;
+
+        // disable callbacks of all trackers
+        req_enable_callbacks->data = false;
+        for (size_t i = 0; i < tracker_list_.size(); i++) {
+          tracker_list_.at(i)->enableCallbacks(req_enable_callbacks);
+        }
+
+        // enable the callbacks for the active tracker
+        req_enable_callbacks->data = true;
+        tracker_list_.at(active_tracker_idx_)
+            ->enableCallbacks(req_enable_callbacks);
+
+        // call the goto
+        auto tracker_response =
+            tracker_list_.at(active_tracker_idx_)->setReference(req_goto_out);
+
+        // disable the callbacks back again
+        req_enable_callbacks->data = false;
+        tracker_list_.at(active_tracker_idx_)
+            ->enableCallbacks(req_enable_callbacks);
+      }
+    }
+
+    // if repulsing_ and the distance is safe once again
+    if (bumper_repulsing_ && !horizontal_collision_detected &&
+        !vertical_collision_detected) {
+      RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000,
+                           "Bumper: no more collision, stopping repulsion");
+
       if (_bumper_switch_tracker_) {
         auto active_tracker_idx =
             mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
         std::string active_tracker_name =
             _tracker_names_.at(active_tracker_idx);
 
-        // remember the previously active tracker
-        bumper_previous_tracker_ = active_tracker_name;
-
-        if (active_tracker_name != _bumper_tracker_name_) {
-          switchTracker(_bumper_tracker_name_);
+        if (active_tracker_name != bumper_previous_tracker_) {
+          switchTracker(bumper_previous_tracker_);
         }
       }
 
@@ -8513,1966 +8284,1876 @@ void ControlManager::bumperPushFromObstacle(void) {
         std::string active_controller_name =
             _controller_names_.at(active_controller_idx);
 
-        // remember the previously active controller
-        bumper_previous_controller_ = active_controller_name;
-
-        if (active_controller_name != _bumper_controller_name_) {
-          switchController(_bumper_controller_name_);
+        if (active_controller_name != bumper_previous_controller_) {
+          switchController(bumper_previous_controller_);
         }
+      }
+
+      std::shared_ptr<std_srvs::srv::SetBool::Request> req_enable_callbacks =
+          std::make_shared<std_srvs::srv::SetBool::Request>();
+
+      {
+        std::scoped_lock lock(mutex_tracker_list_);
+
+        // enable callbacks of all trackers
+        req_enable_callbacks->data = true;
+        for (size_t i = 0; i < tracker_list_.size(); i++) {
+          tracker_list_.at(i)->enableCallbacks(req_enable_callbacks);
+        }
+      }
+
+      callbacks_enabled_ = true;
+
+      bumper_repulsing_ = false;
+    }
+  }
+
+  //}
+
+  /* bumperGetSectorId() //{ */
+
+  int ControlManager::bumperGetSectorId(const double& x, const double& y,
+                                        [[maybe_unused]] const double& z) {
+    // copy member variables
+    auto bumper_data = sh_bumper_.getMsg();
+
+    // heading of the point in drone frame
+    double point_heading_horizontal = atan2(y, x);
+
+    point_heading_horizontal += TAU;
+
+    // if point_heading_horizontal is greater then 2*M_PI mod it
+    if (fabs(point_heading_horizontal) >= TAU) {
+      point_heading_horizontal = fmod(point_heading_horizontal, TAU);
+    }
+
+    // heading of the right edge of the first sector
+    double sector_size = TAU / double(bumper_data->n_horizontal_sectors);
+
+    // calculate the idx
+    int idx =
+        floor((point_heading_horizontal + (sector_size / 2.0)) / sector_size);
+
+    if (idx > int(bumper_data->n_horizontal_sectors) - 1) {
+      idx -= bumper_data->n_horizontal_sectors;
+    }
+
+    return idx;
+  }
+
+  //}
+
+  // | ------------------------- safety ------------------------- |
+
+  /* //{ changeLandingState() */
+
+  void ControlManager::changeLandingState(LandingStates_t new_state) {
+    // copy member variables
+    auto last_control_output =
+        mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
+
+    {
+      std::scoped_lock lock(mutex_landing_state_machine_);
+
+      previous_state_landing_ = current_state_landing_;
+      current_state_landing_ = new_state;
+    }
+
+    switch (current_state_landing_) {
+      case IDLE_STATE:
+        break;
+      case LANDING_STATE: {
+        RCLCPP_DEBUG(node_->get_logger(), "starting eland timer");
+        timer_eland_->start();
+        RCLCPP_DEBUG(node_->get_logger(), "eland timer started");
+        eland_triggered_ = true;
+        bumper_enabled_ = false;
+
+        landing_uav_mass_ = getMass();
+      }
+
+      break;
+    }
+
+    RCLCPP_INFO(node_->get_logger(),
+                "switching emergency landing state %s -> %s",
+                state_names[previous_state_landing_],
+                state_names[current_state_landing_]);
+  }
+
+  //}
+
+  /* hover() //{ */
+
+  std::tuple<bool, std::string> ControlManager::hover(void) {
+    if (!is_initialized_) {
+      return std::tuple(false, "the ControlManager is not initialized");
+    }
+
+    if (eland_triggered_) {
+      return std::tuple(false, "cannot hover, eland already triggered");
+    }
+
+    if (failsafe_triggered_) {
+      return std::tuple(false, "cannot hover, failsafe already triggered");
+    }
+
+    {
+      std::scoped_lock lock(mutex_tracker_list_);
+
+      std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+          std::make_shared<std_srvs::srv::Trigger::Request>();
+
+      auto response = tracker_list_.at(active_tracker_idx_)->hover(request);
+
+      if (response != nullptr) {
+        return std::tuple(response->success, response->message);
+
+      } else {
+        std::stringstream ss;
+        ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
+           << "' does not implement the 'hover()' function!";
+
+        return std::tuple(false, ss.str());
+      }
+    }
+  }
+
+  //}
+
+  /* //{ ehover() */
+
+  std::tuple<bool, std::string> ControlManager::ehover(void) {
+    if (!is_initialized_) {
+      return std::tuple(false, "the ControlManager is not initialized");
+    }
+
+    if (eland_triggered_) {
+      return std::tuple(false, "cannot ehover, eland already triggered");
+    }
+
+    if (failsafe_triggered_) {
+      return std::tuple(false, "cannot ehover, failsafe already triggered");
+    }
+
+    // copy the member variables
+    auto last_control_output =
+        mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
+    auto active_tracker_idx =
+        mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
+
+    if (active_tracker_idx == _null_tracker_idx_) {
+      std::stringstream ss;
+      ss << "can not trigger ehover while not flying";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+
+      return std::tuple(false, ss.str());
+    }
+
+    ungripSrv();
+
+    {
+      auto [success, message] = switchTracker(_ehover_tracker_name_);
+
+      // check if the tracker was successfully switched
+      // this is vital, that is the core of the hover
+      if (!success) {
+        std::stringstream ss;
+        ss << "error during switching to ehover tracker: '" << message << "'";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+
+        return std::tuple(success, ss.str());
       }
     }
 
-    bumper_repulsing_ = true;
+    {
+      auto [success, message] = switchController(_eland_controller_name_);
+
+      // check if the controller was successfully switched
+      // this is not vital, we can continue without that
+      if (!success) {
+        std::stringstream ss;
+        ss << "error during switching to ehover controller: '" << message
+           << "'";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+      }
+    }
+
+    std::stringstream ss;
+    ss << "ehover activated";
+    RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                "" << ss.str());
 
     callbacks_enabled_ = false;
 
-    std::shared_ptr<std_srvs::srv::SetBool::Request> req_enable_callbacks =
-        std::make_shared<std_srvs::srv::SetBool::Request>();
+    return std::tuple(true, ss.str());
+  }
 
-    // create the reference in the fcu_untilted frame
-    mrs_msgs::msg::ReferenceStamped reference_fcu_untilted;
+  //}
 
-    reference_fcu_untilted.header.frame_id = "fcu_untilted";
+  /* eland() //{ */
 
-    if (horizontal_collision_detected) {
-      reference_fcu_untilted.reference.position.x =
-          cos(direction) * repulsion_distance;
-      reference_fcu_untilted.reference.position.y =
-          sin(direction) * repulsion_distance;
-    } else {
-      reference_fcu_untilted.reference.position.x = 0;
-      reference_fcu_untilted.reference.position.y = 0;
+  std::tuple<bool, std::string> ControlManager::eland(void) {
+    if (!is_initialized_) {
+      return std::tuple(false, "the ControlManager is not initialized");
     }
 
-    reference_fcu_untilted.reference.heading = 0;
+    if (eland_triggered_) {
+      return std::tuple(false, "cannot eland, eland already triggered");
+    }
 
-    if (vertical_collision_detected) {
-      reference_fcu_untilted.reference.position.z = vertical_repulsion_distance;
+    if (failsafe_triggered_) {
+      return std::tuple(false, "cannot eland, failsafe already triggered");
+    }
+
+    // copy member variables
+    auto last_control_output =
+        mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
+    auto active_tracker_idx =
+        mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
+
+    if (active_tracker_idx == _null_tracker_idx_) {
+      std::stringstream ss;
+      ss << "can not trigger eland while not flying";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+
+      return std::tuple(false, ss.str());
+    }
+
+    if (_rc_emergency_handoff_) {
+      toggleOutput(false);
+
+      return std::tuple(true, "RC emergency handoff is ON, disabling output");
+    }
+
+    {
+      auto [success, message] = switchTracker(_ehover_tracker_name_);
+
+      // check if the tracker was successfully switched
+      // this is vital
+      if (!success) {
+        std::stringstream ss;
+        ss << "error during switching to eland tracker: '" << message << "'";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+
+        return std::tuple(success, ss.str());
+      }
+    }
+
+    {
+      auto [success, message] = switchController(_eland_controller_name_);
+
+      // check if the controller was successfully switched
+      // this is not vital, we can continue without it
+      if (!success) {
+        std::stringstream ss;
+        ss << "error during switching to eland controller: '" << message << "'";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+      }
+    }
+
+    // | ----------------- call the eland service ----------------- |
+
+    std::stringstream ss;
+    bool success;
+
+    if (elandSrv()) {
+      changeLandingState(LANDING_STATE);
+
+      odometryCallbacksSrv(false);
+
+      ss << "eland activated";
+      RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "" << ss.str());
+
+      success = true;
+
+      callbacks_enabled_ = false;
+
     } else {
-      reference_fcu_untilted.reference.position.z = 0;
+      ss << "error during activation of eland";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+
+      success = false;
+    }
+
+    return std::tuple(success, ss.str());
+  }
+
+  //}
+
+  /* failsafe() //{ */
+
+  std::tuple<bool, std::string> ControlManager::failsafe(void) {
+    // copy member variables
+    auto last_control_output =
+        mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
+    auto active_controller_idx =
+        mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
+    auto active_tracker_idx =
+        mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
+
+    if (!is_initialized_) {
+      return std::tuple(false, "the ControlManager is not initialized");
+    }
+
+    if (failsafe_triggered_) {
+      return std::tuple(false, "cannot, failsafe already triggered");
+    }
+
+    if (active_tracker_idx == _null_tracker_idx_) {
+      std::stringstream ss;
+      ss << "can not trigger failsafe while not flying";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      return std::tuple(false, ss.str());
+    }
+
+    if (_rc_emergency_handoff_) {
+      toggleOutput(false);
+
+      return std::tuple(true, "RC emergency handoff is ON, disabling output");
+    }
+
+    if (getLowestOuput(_hw_api_inputs_) == POSITION) {
+      return eland();
+    }
+
+    if (_parachute_enabled_) {
+      auto [success, message] = deployParachute();
+
+      if (success) {
+        std::stringstream ss;
+        ss << "failsafe activated (parachute): '" << message << "'";
+        RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
+
+        return std::tuple(true, ss.str());
+
+      } else {
+        std::stringstream ss;
+        ss << "could not deploy parachute: '" << message
+           << "', continuing with normal failsafe";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+      }
+    }
+
+    if (_failsafe_controller_idx_ != active_controller_idx) {
+      try {
+        std::scoped_lock lock(mutex_controller_list_);
+
+        RCLCPP_INFO(node_->get_logger(), "activating the controller '%s'",
+                    _failsafe_controller_name_.c_str());
+        controller_list_.at(_failsafe_controller_idx_)
+            ->activate(last_control_output);
+
+        {
+          std::scoped_lock lock(mutex_controller_tracker_switch_time_);
+
+          // update the time (used in failsafe)
+          controller_tracker_switch_time_ = clock_->now();
+        }
+
+        failsafe_triggered_ = true;
+        RCLCPP_DEBUG(node_->get_logger(), "stopping eland timer");
+        timer_eland_->stop();
+        RCLCPP_DEBUG(node_->get_logger(), "eland timer stopped");
+
+        landing_uav_mass_ = getMass();
+
+        eland_triggered_ = false;
+        RCLCPP_DEBUG(node_->get_logger(), "starting failsafe timer");
+        timer_failsafe_->start();
+        RCLCPP_DEBUG(node_->get_logger(), "failsafe timer started");
+
+        bumper_enabled_ = false;
+
+        odometryCallbacksSrv(false);
+
+        callbacks_enabled_ = false;
+
+        RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000,
+                             "the controller '%s' was activated",
+                             _failsafe_controller_name_.c_str());
+
+        // super important, switch the active controller idx
+        try {
+          controller_list_.at(active_controller_idx_)->deactivate();
+          active_controller_idx_ = _failsafe_controller_idx_;
+        } catch (std::runtime_error& exrun) {
+          RCLCPP_ERROR_THROTTLE(
+              node_->get_logger(), *clock_, 1000,
+              "could not deactivate the controller '%s'",
+              _controller_names_.at(active_controller_idx_).c_str());
+        } catch (std::runtime_error& exrun) {
+          RCLCPP_ERROR_THROTTLE(
+              node_->get_logger(), *clock_, 1000,
+              "could not deactivate the controller '%s'",
+              _controller_names_.at(active_controller_idx_).c_str());
+        }
+      } catch (std::runtime_error& exrun) {
+        RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                              "error during activation of the controller '%s'",
+                              _failsafe_controller_name_.c_str());
+        RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                              "exception: '%s'", exrun.what());
+      }
+    }
+
+    publishDiagnostics();
+
+    return std::tuple(true, "failsafe activated");
+  }
+
+  //}
+
+  /* escalatingFailsafe() //{ */
+
+  std::tuple<bool, std::string> ControlManager::escalatingFailsafe(void) {
+    std::stringstream ss;
+
+    if ((clock_->now() - escalating_failsafe_time_).seconds() <
+        _escalating_failsafe_timeout_) {
+      ss << "too soon for escalating failsafe";
+      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
+                                  "" << ss.str());
+
+      return std::tuple(false, ss.str());
+    }
+
+    if (!output_enabled_) {
+      ss << "not escalating failsafe, output is disabled";
+      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
+                                  "" << ss.str());
+
+      return std::tuple(false, ss.str());
+    }
+
+    RCLCPP_WARN(node_->get_logger(), "escalating failsafe triggered");
+
+    auto active_tracker_idx =
+        mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
+    auto active_controller_idx =
+        mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
+
+    std::string active_tracker_name = _tracker_names_.at(active_tracker_idx);
+    std::string active_controller_name =
+        _controller_names_.at(active_controller_idx);
+
+    EscalatingFailsafeStates_t next_state = getNextEscFailsafeState();
+
+    escalating_failsafe_time_ = clock_->now();
+
+    switch (next_state) {
+      case ESC_NONE_STATE: {
+        ss << "escalating failsafe has run to impossible situation";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
+                                     "" << ss.str());
+
+        return std::tuple(
+            false, "escalating failsafe has run to impossible situation");
+
+        break;
+      }
+
+      case ESC_EHOVER_STATE: {
+        ss << "escalating failsafe escalates to ehover";
+        RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
+                                    "" << ss.str());
+
+        auto [success, message] = ehover();
+
+        if (success) {
+          state_escalating_failsafe_ = ESC_EHOVER_STATE;
+        }
+
+        return {success, message};
+
+        break;
+      }
+
+      case ESC_ELAND_STATE: {
+        ss << "escalating failsafe escalates to eland";
+        RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
+                                    "" << ss.str());
+
+        auto [success, message] = eland();
+
+        if (success) {
+          state_escalating_failsafe_ = ESC_ELAND_STATE;
+        }
+
+        return {success, message};
+
+        break;
+      }
+
+      case ESC_FAILSAFE_STATE: {
+        escalating_failsafe_time_ = clock_->now();
+
+        ss << "escalating failsafe escalates to failsafe";
+        RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
+                                    "" << ss.str());
+
+        auto [success, message] = failsafe();
+
+        if (success) {
+          state_escalating_failsafe_ = ESC_FINISHED_STATE;
+        }
+
+        return {success, message};
+
+        break;
+      }
+
+      case ESC_FINISHED_STATE: {
+        escalating_failsafe_time_ = clock_->now();
+
+        ss << "escalating failsafe has nothing more to do";
+        RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
+                                    "" << ss.str());
+
+        return std::tuple(false, "escalating failsafe has nothing more to do");
+
+        break;
+      }
+
+      default: {
+        break;
+      }
+    }
+
+    RCLCPP_ERROR(node_->get_logger(),
+                 "escalatingFailsafe() reached the final return, this should "
+                 "not happen!");
+
+    return std::tuple(false, "escalating failsafe exception");
+  }
+
+  //}
+
+  /* getNextEscFailsafeState() //{ */
+
+  EscalatingFailsafeStates_t ControlManager::getNextEscFailsafeState(void) {
+    EscalatingFailsafeStates_t current_state = state_escalating_failsafe_;
+
+    switch (current_state) {
+      case ESC_FINISHED_STATE: {
+        return ESC_FINISHED_STATE;
+
+        break;
+      }
+
+      case ESC_NONE_STATE: {
+        if (_escalating_failsafe_ehover_) {
+          return ESC_EHOVER_STATE;
+        } else if (_escalating_failsafe_eland_) {
+          return ESC_ELAND_STATE;
+        } else if (_escalating_failsafe_failsafe_) {
+          return ESC_FAILSAFE_STATE;
+        } else {
+          return ESC_FINISHED_STATE;
+        }
+
+        break;
+      }
+
+      case ESC_EHOVER_STATE: {
+        if (_escalating_failsafe_eland_) {
+          return ESC_ELAND_STATE;
+        } else if (_escalating_failsafe_failsafe_) {
+          return ESC_FAILSAFE_STATE;
+        } else {
+          return ESC_FINISHED_STATE;
+        }
+
+        break;
+      }
+
+      case ESC_ELAND_STATE: {
+        if (_escalating_failsafe_failsafe_) {
+          return ESC_FAILSAFE_STATE;
+        } else {
+          return ESC_FINISHED_STATE;
+        }
+
+        break;
+      }
+
+      case ESC_FAILSAFE_STATE: {
+        return ESC_FINISHED_STATE;
+
+        break;
+      }
+    }
+
+    RCLCPP_ERROR(node_->get_logger(),
+                 "getNextEscFailsafeState() reached the final return, this "
+                 "should not happen!");
+
+    return ESC_NONE_STATE;
+  }
+
+  //}
+
+  // | ------------------- trajectory tracking ------------------ |
+
+  /* startTrajectoryTracking() //{ */
+
+  std::tuple<bool, std::string> ControlManager::startTrajectoryTracking(void) {
+    if (!is_initialized_) {
+      return std::tuple(false, "the ControlManager is not initialized");
     }
 
     {
       std::scoped_lock lock(mutex_tracker_list_);
 
-      // transform the reference into the currently used frame
-      // this is under the mutex_tracker_list since we don't won't the
-      // odometry switch to happen to the tracker before we actually call the
-      // goto service
+      std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+          std::make_shared<std_srvs::srv::Trigger::Request>();
 
-      auto ret = transformer_->transformSingle(reference_fcu_untilted,
-                                               uav_state.header.frame_id);
+      auto response = tracker_list_.at(active_tracker_idx_)
+                          ->startTrajectoryTracking(request);
 
-      if (!ret) {
-        RCLCPP_WARN_THROTTLE(
-            node_->get_logger(), *clock_, 1000,
-            "Bumper: bumper reference could not be transformed");
-        return;
+      if (response != nullptr) {
+        return std::tuple(response->success, response->message);
+
+      } else {
+        std::stringstream ss;
+        ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
+           << "' does not implement the 'startTrajectoryTracking()' function!";
+
+        return std::tuple(false, ss.str());
       }
-
-      reference_fcu_untilted = ret.value();
-
-      // copy the reference into the service type message
-      std::shared_ptr<mrs_msgs::srv::ReferenceSrv::Request> req_goto_out =
-          std::make_shared<mrs_msgs::srv::ReferenceSrv::Request>();
-      req_goto_out->reference = reference_fcu_untilted.reference;
-
-      // disable callbacks of all trackers
-      req_enable_callbacks->data = false;
-      for (size_t i = 0; i < tracker_list_.size(); i++) {
-        tracker_list_.at(i)->enableCallbacks(req_enable_callbacks);
-      }
-
-      // enable the callbacks for the active tracker
-      req_enable_callbacks->data = true;
-      tracker_list_.at(active_tracker_idx_)
-          ->enableCallbacks(req_enable_callbacks);
-
-      // call the goto
-      auto tracker_response =
-          tracker_list_.at(active_tracker_idx_)->setReference(req_goto_out);
-
-      // disable the callbacks back again
-      req_enable_callbacks->data = false;
-      tracker_list_.at(active_tracker_idx_)
-          ->enableCallbacks(req_enable_callbacks);
     }
   }
 
-  // if repulsing_ and the distance is safe once again
-  if (bumper_repulsing_ && !horizontal_collision_detected &&
-      !vertical_collision_detected) {
-    RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000,
-                         "Bumper: no more collision, stopping repulsion");
+  //}
 
-    if (_bumper_switch_tracker_) {
-      auto active_tracker_idx =
-          mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
-      std::string active_tracker_name = _tracker_names_.at(active_tracker_idx);
+  /* stopTrajectoryTracking() //{ */
 
-      if (active_tracker_name != bumper_previous_tracker_) {
-        switchTracker(bumper_previous_tracker_);
-      }
+  std::tuple<bool, std::string> ControlManager::stopTrajectoryTracking(void) {
+    if (!is_initialized_) {
+      return std::tuple(false, "the ControlManager is not initialized");
     }
-
-    if (_bumper_switch_controller_) {
-      auto active_controller_idx =
-          mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
-      std::string active_controller_name =
-          _controller_names_.at(active_controller_idx);
-
-      if (active_controller_name != bumper_previous_controller_) {
-        switchController(bumper_previous_controller_);
-      }
-    }
-
-    std::shared_ptr<std_srvs::srv::SetBool::Request> req_enable_callbacks =
-        std::make_shared<std_srvs::srv::SetBool::Request>();
 
     {
       std::scoped_lock lock(mutex_tracker_list_);
 
-      // enable callbacks of all trackers
-      req_enable_callbacks->data = true;
-      for (size_t i = 0; i < tracker_list_.size(); i++) {
-        tracker_list_.at(i)->enableCallbacks(req_enable_callbacks);
+      std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+          std::make_shared<std_srvs::srv::Trigger::Request>();
+
+      auto response = tracker_list_.at(active_tracker_idx_)
+                          ->stopTrajectoryTracking(request);
+
+      if (response != nullptr) {
+        return std::tuple(response->success, response->message);
+
+      } else {
+        std::stringstream ss;
+        ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
+           << "' does not implement the 'stopTrajectoryTracking()' function!";
+
+        return std::tuple(false, ss.str());
       }
     }
-
-    callbacks_enabled_ = true;
-
-    bumper_repulsing_ = false;
-  }
-}
-
-//}
-
-/* bumperGetSectorId() //{ */
-
-int ControlManager::bumperGetSectorId(const double& x, const double& y,
-                                      [[maybe_unused]] const double& z) {
-  // copy member variables
-  auto bumper_data = sh_bumper_.getMsg();
-
-  // heading of the point in drone frame
-  double point_heading_horizontal = atan2(y, x);
-
-  point_heading_horizontal += TAU;
-
-  // if point_heading_horizontal is greater then 2*M_PI mod it
-  if (fabs(point_heading_horizontal) >= TAU) {
-    point_heading_horizontal = fmod(point_heading_horizontal, TAU);
   }
 
-  // heading of the right edge of the first sector
-  double sector_size = TAU / double(bumper_data->n_horizontal_sectors);
+  //}
 
-  // calculate the idx
-  int idx =
-      floor((point_heading_horizontal + (sector_size / 2.0)) / sector_size);
+  /* resumeTrajectoryTracking() //{ */
 
-  if (idx > int(bumper_data->n_horizontal_sectors) - 1) {
-    idx -= bumper_data->n_horizontal_sectors;
-  }
-
-  return idx;
-}
-
-//}
-
-// | ------------------------- safety ------------------------- |
-
-/* //{ changeLandingState() */
-
-void ControlManager::changeLandingState(LandingStates_t new_state) {
-  // copy member variables
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-
-  {
-    std::scoped_lock lock(mutex_landing_state_machine_);
-
-    previous_state_landing_ = current_state_landing_;
-    current_state_landing_ = new_state;
-  }
-
-  switch (current_state_landing_) {
-    case IDLE_STATE:
-      break;
-    case LANDING_STATE: {
-      RCLCPP_DEBUG(node_->get_logger(), "starting eland timer");
-      timer_eland_->start();
-      RCLCPP_DEBUG(node_->get_logger(), "eland timer started");
-      eland_triggered_ = true;
-      bumper_enabled_ = false;
-
-      landing_uav_mass_ = getMass();
+  std::tuple<bool, std::string> ControlManager::resumeTrajectoryTracking(void) {
+    if (!is_initialized_) {
+      return std::tuple(false, "the ControlManager is not initialized");
     }
 
-    break;
+    {
+      std::scoped_lock lock(mutex_tracker_list_);
+
+      std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+          std::make_shared<std_srvs::srv::Trigger::Request>();
+
+      auto response = tracker_list_.at(active_tracker_idx_)
+                          ->resumeTrajectoryTracking(request);
+
+      if (response != nullptr) {
+        return std::tuple(response->success, response->message);
+
+      } else {
+        std::stringstream ss;
+        ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
+           << "' does not implement the 'resumeTrajectoryTracking()' function!";
+
+        return std::tuple(false, ss.str());
+      }
+    }
   }
 
-  RCLCPP_INFO(node_->get_logger(), "switching emergency landing state %s -> %s",
-              state_names[previous_state_landing_],
-              state_names[current_state_landing_]);
-}
+  //}
 
-//}
+  /* gotoTrajectoryStart() //{ */
 
-/* hover() //{ */
+  std::tuple<bool, std::string> ControlManager::gotoTrajectoryStart(void) {
+    if (!is_initialized_) {
+      return std::tuple(false, "the ControlManager is not initialized");
+    }
 
-std::tuple<bool, std::string> ControlManager::hover(void) {
-  if (!is_initialized_) {
-    return std::tuple(false, "the ControlManager is not initialized");
+    {
+      std::scoped_lock lock(mutex_tracker_list_);
+
+      std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+          std::make_shared<std_srvs::srv::Trigger::Request>();
+
+      auto response =
+          tracker_list_.at(active_tracker_idx_)->gotoTrajectoryStart(request);
+
+      if (response != nullptr) {
+        return std::tuple(response->success, response->message);
+
+      } else {
+        std::stringstream ss;
+        ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
+           << "' does not implement the 'gotoTrajectoryStart()' function!";
+
+        return std::tuple(false, ss.str());
+      }
+    }
   }
 
-  if (eland_triggered_) {
-    return std::tuple(false, "cannot hover, eland already triggered");
+  //}
+
+  // | ----------------- service client wrappers ---------------- |
+
+  /* arming() //{ */
+
+  std::tuple<bool, std::string> ControlManager::arming(const bool input) {
+    std::stringstream ss;
+
+    if (input) {
+      ss << "not allowed to arm using the ControlManager, maybe later when we "
+            "don't do bugs";
+      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "" << ss.str());
+      return std::tuple(false, ss.str());
+    }
+
+    if (!input && !isOffboard()) {
+      ss << "can not disarm, not in OFFBOARD mode";
+      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "" << ss.str());
+      return std::tuple(false, ss.str());
+    }
+
+    if (!input && _rc_emergency_handoff_) {
+      toggleOutput(false);
+
+      return std::tuple(true, "RC emergency handoff is ON, disabling output");
+    }
+
+    std::shared_ptr<std_srvs::srv::SetBool::Request> request =
+        std::make_shared<std_srvs::srv::SetBool::Request>();
+
+    request->data = input ? 1 : 0;  // arm or disarm?
+
+    RCLCPP_INFO(node_->get_logger(), "calling for %s",
+                input ? "arming" : "disarming");
+
+    auto response = sch_arming_.callSync(request);
+
+    if (response) {
+      if (response.value()->success) {
+        ss << "service call for " << (input ? "arming" : "disarming")
+           << " was successful";
+        RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                    "" << ss.str());
+
+        if (!input) {
+          toggleOutput(false);
+
+          RCLCPP_DEBUG(node_->get_logger(), "stopping failsafe timer");
+          timer_failsafe_->stop();
+          RCLCPP_DEBUG(node_->get_logger(), "failsafe timer stopped");
+
+          RCLCPP_DEBUG(node_->get_logger(), "stopping the eland timer");
+          timer_eland_->stop();
+          RCLCPP_DEBUG(node_->get_logger(), "eland timer stopped");
+        }
+
+      } else {
+        ss << "service call for " << (input ? "arming" : "disarming")
+           << " failed";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+      }
+
+    } else {
+      ss << "calling for " << (input ? "arming" : "disarming")
+         << " resulted in failure: '" << response.value()->message << "'";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+    }
+
+    return std::tuple(response.value()->success, ss.str());
   }
 
-  if (failsafe_triggered_) {
-    return std::tuple(false, "cannot hover, failsafe already triggered");
+  //}
+
+  /* odometryCallbacksSrv() //{ */
+
+  void ControlManager::odometryCallbacksSrv(const bool input) {
+    RCLCPP_INFO(node_->get_logger(), "switching odometry callbacks to %s",
+                input ? "ON" : "OFF");
+
+    std::shared_ptr<std_srvs::srv::SetBool::Request> request =
+        std::make_shared<std_srvs::srv::SetBool::Request>();
+
+    request->data = input;
+
+    auto response = sch_set_odometry_callbacks_.callSync(request);
+
+    if (response) {
+      if (!response.value()->success) {
+        RCLCPP_WARN(node_->get_logger(),
+                    "service call for toggle odometry callbacks returned: '%s'",
+                    response.value()->message.c_str());
+      }
+
+    } else {
+      RCLCPP_ERROR(node_->get_logger(),
+                   "service call for toggle odometry callbacks failed!");
+    }
   }
 
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
+  //}
+
+  /* elandSrv() //{ */
+
+  bool ControlManager::elandSrv(void) {
+    RCLCPP_INFO(node_->get_logger(), "calling for eland");
 
     std::shared_ptr<std_srvs::srv::Trigger::Request> request =
         std::make_shared<std_srvs::srv::Trigger::Request>();
 
-    auto response = tracker_list_.at(active_tracker_idx_)->hover(request);
+    auto response = sch_eland_.callSync(request);
 
-    if (response != nullptr) {
-      return std::tuple(response->success, response->message);
+    if (response) {
+      if (!response.value()->success) {
+        RCLCPP_WARN(node_->get_logger(),
+                    "service call for eland returned: '%s'",
+                    response.value()->message.c_str());
+      }
+
+      return response.value()->success;
 
     } else {
-      std::stringstream ss;
-      ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
-         << "' does not implement the 'hover()' function!";
+      RCLCPP_ERROR(node_->get_logger(), "service call for eland failed!");
 
+      return false;
+    }
+  }
+
+  //}
+
+  /* parachuteSrv() //{ */
+
+  bool ControlManager::parachuteSrv(void) {
+    RCLCPP_INFO(node_->get_logger(), "calling for parachute deployment");
+
+    std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+        std::make_shared<std_srvs::srv::Trigger::Request>();
+
+    auto response = sch_parachute_.callSync(request);
+
+    if (response) {
+      if (!response.value()->success) {
+        RCLCPP_WARN(node_->get_logger(),
+                    "service call for parachute deployment returned: '%s'",
+                    response.value()->message.c_str());
+      }
+
+      return response.value()->success;
+
+    } else {
+      RCLCPP_ERROR(node_->get_logger(),
+                   "service call for parachute deployment failed!");
+
+      return false;
+    }
+  }
+
+  //}
+
+  /* ungripSrv() //{ */
+
+  void ControlManager::ungripSrv(void) {
+    std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+        std::make_shared<std_srvs::srv::Trigger::Request>();
+
+    auto response = sch_ungrip_.callSync(request);
+
+    if (response) {
+      if (!response.value()->success) {
+        RCLCPP_DEBUG_THROTTLE(
+            node_->get_logger(), *clock_, 1000,
+            "service call for ungripping payload returned: '%s'",
+            response.value()->message.c_str());
+      }
+
+    } else {
+      RCLCPP_DEBUG_THROTTLE(node_->get_logger(), *clock_, 1000,
+                            "service call for ungripping payload failed!");
+    }
+  }
+
+  //}
+
+  // | ------------------------ routines ------------------------ |
+
+  /* toggleOutput() //{ */
+
+  void ControlManager::toggleOutput(const bool& input) {
+    if (input == output_enabled_) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 100,
+                           "output is already %s", input ? "ON" : "OFF");
+      return;
+    }
+
+    RCLCPP_INFO(node_->get_logger(), "switching output %s",
+                input ? "ON" : "OFF");
+
+    output_enabled_ = input;
+
+    // if switching output off, switch to NullTracker
+    if (!output_enabled_) {
+      RCLCPP_INFO(node_->get_logger(),
+                  "switching to 'NullTracker' after switching output off");
+
+      switchTracker(_null_tracker_name_);
+
+      RCLCPP_INFO_STREAM(node_->get_logger(),
+                         "switching to the controller '"
+                             << _eland_controller_name_
+                             << "' after switching output off");
+
+      switchController(_eland_controller_name_);
+
+      // | --------- deactivate all trackers and controllers -------- |
+
+      for (int i = 0; i < int(tracker_list_.size()); i++) {
+        std::map<std::string, TrackerParams>::iterator it;
+        it = trackers_.find(_tracker_names_.at(i));
+
+        try {
+          RCLCPP_INFO(node_->get_logger(), "deactivating the tracker '%s'",
+                      it->second.address.c_str());
+          tracker_list_.at(i)->deactivate();
+        } catch (std::runtime_error& ex) {
+          RCLCPP_ERROR(node_->get_logger(),
+                       "exception caught during tracker deactivation: '%s'",
+                       ex.what());
+        }
+      }
+
+      for (int i = 0; i < int(controller_list_.size()); i++) {
+        std::map<std::string, ControllerParams>::iterator it;
+        it = controllers_.find(_controller_names_.at(i));
+
+        try {
+          RCLCPP_INFO(node_->get_logger(), "deactivating the controller '%s'",
+                      it->second.address.c_str());
+          controller_list_.at(i)->deactivate();
+        } catch (std::runtime_error& ex) {
+          RCLCPP_ERROR(node_->get_logger(),
+                       "exception caught during controller deactivation: '%s'",
+                       ex.what());
+        }
+      }
+
+      timer_failsafe_->stop();
+      timer_eland_->stop();
+      timer_pirouette_->stop();
+
+      offboard_mode_was_true_ = false;
+    }
+  }
+
+  //}
+
+  /* switchTracker() //{ */
+
+  std::tuple<bool, std::string> ControlManager::switchTracker(
+      const std::string& tracker_name) {
+    mrs_lib::Routine profiler_routine =
+        profiler_.createRoutine("switchTracker");
+    mrs_lib::ScopeTimer timer =
+        mrs_lib::ScopeTimer(node_, "ControlManager::switchTracker",
+                            scope_timer_logger_, scope_timer_enabled_);
+
+    // copy member variables
+    auto last_tracker_cmd =
+        mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
+    auto active_tracker_idx =
+        mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
+
+    std::stringstream ss;
+
+    if (!got_uav_state_) {
+      ss << "can not switch tracker, missing odometry!";
+      RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
       return std::tuple(false, ss.str());
     }
-  }
-}
 
-//}
-
-/* //{ ehover() */
-
-std::tuple<bool, std::string> ControlManager::ehover(void) {
-  if (!is_initialized_) {
-    return std::tuple(false, "the ControlManager is not initialized");
-  }
-
-  if (eland_triggered_) {
-    return std::tuple(false, "cannot ehover, eland already triggered");
-  }
-
-  if (failsafe_triggered_) {
-    return std::tuple(false, "cannot ehover, failsafe already triggered");
-  }
-
-  // copy the member variables
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-  auto active_tracker_idx =
-      mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
-
-  if (active_tracker_idx == _null_tracker_idx_) {
-    std::stringstream ss;
-    ss << "can not trigger ehover while not flying";
-    RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                 "" << ss.str());
-
-    return std::tuple(false, ss.str());
-  }
-
-  ungripSrv();
-
-  {
-    auto [success, message] = switchTracker(_ehover_tracker_name_);
-
-    // check if the tracker was successfully switched
-    // this is vital, that is the core of the hover
-    if (!success) {
-      std::stringstream ss;
-      ss << "error during switching to ehover tracker: '" << message << "'";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
-
-      return std::tuple(success, ss.str());
+    if (_state_input_ == INPUT_UAV_STATE &&
+        _odometry_innovation_check_enabled_ &&
+        !sh_odometry_innovation_.hasMsg()) {
+      ss << "can not switch tracker, missing odometry innovation!";
+      RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
+      return std::tuple(false, ss.str());
     }
-  }
 
-  {
-    auto [success, message] = switchController(_eland_controller_name_);
+    auto new_tracker_idx = idxInVector(tracker_name, _tracker_names_);
 
-    // check if the controller was successfully switched
-    // this is not vital, we can continue without that
-    if (!success) {
-      std::stringstream ss;
-      ss << "error during switching to ehover controller: '" << message << "'";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
+    // check if the tracker exists
+    if (!new_tracker_idx) {
+      ss << "the tracker '" << tracker_name << "' does not exist!";
+      RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
+      return std::tuple(false, ss.str());
     }
-  }
 
-  std::stringstream ss;
-  ss << "ehover activated";
-  RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                              "" << ss.str());
-
-  callbacks_enabled_ = false;
-
-  return std::tuple(true, ss.str());
-}
-
-//}
-
-/* eland() //{ */
-
-std::tuple<bool, std::string> ControlManager::eland(void) {
-  if (!is_initialized_) {
-    return std::tuple(false, "the ControlManager is not initialized");
-  }
-
-  if (eland_triggered_) {
-    return std::tuple(false, "cannot eland, eland already triggered");
-  }
-
-  if (failsafe_triggered_) {
-    return std::tuple(false, "cannot eland, failsafe already triggered");
-  }
-
-  // copy member variables
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-  auto active_tracker_idx =
-      mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
-
-  if (active_tracker_idx == _null_tracker_idx_) {
-    std::stringstream ss;
-    ss << "can not trigger eland while not flying";
-    RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                 "" << ss.str());
-
-    return std::tuple(false, ss.str());
-  }
-
-  if (_rc_emergency_handoff_) {
-    toggleOutput(false);
-
-    return std::tuple(true, "RC emergency handoff is ON, disabling output");
-  }
-
-  {
-    auto [success, message] = switchTracker(_ehover_tracker_name_);
-
-    // check if the tracker was successfully switched
-    // this is vital
-    if (!success) {
-      std::stringstream ss;
-      ss << "error during switching to eland tracker: '" << message << "'";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
-
-      return std::tuple(success, ss.str());
-    }
-  }
-
-  {
-    auto [success, message] = switchController(_eland_controller_name_);
-
-    // check if the controller was successfully switched
-    // this is not vital, we can continue without it
-    if (!success) {
-      std::stringstream ss;
-      ss << "error during switching to eland controller: '" << message << "'";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
-    }
-  }
-
-  // | ----------------- call the eland service ----------------- |
-
-  std::stringstream ss;
-  bool success;
-
-  if (elandSrv()) {
-    changeLandingState(LANDING_STATE);
-
-    odometryCallbacksSrv(false);
-
-    ss << "eland activated";
-    RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "" << ss.str());
-
-    success = true;
-
-    callbacks_enabled_ = false;
-
-  } else {
-    ss << "error during activation of eland";
-    RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                 "" << ss.str());
-
-    success = false;
-  }
-
-  return std::tuple(success, ss.str());
-}
-
-//}
-
-/* failsafe() //{ */
-
-std::tuple<bool, std::string> ControlManager::failsafe(void) {
-  // copy member variables
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-  auto active_controller_idx =
-      mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
-  auto active_tracker_idx =
-      mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
-
-  if (!is_initialized_) {
-    return std::tuple(false, "the ControlManager is not initialized");
-  }
-
-  if (failsafe_triggered_) {
-    return std::tuple(false, "cannot, failsafe already triggered");
-  }
-
-  if (active_tracker_idx == _null_tracker_idx_) {
-    std::stringstream ss;
-    ss << "can not trigger failsafe while not flying";
-    RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                 "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
-  if (_rc_emergency_handoff_) {
-    toggleOutput(false);
-
-    return std::tuple(true, "RC emergency handoff is ON, disabling output");
-  }
-
-  if (getLowestOuput(_hw_api_inputs_) == POSITION) {
-    return eland();
-  }
-
-  if (_parachute_enabled_) {
-    auto [success, message] = deployParachute();
-
-    if (success) {
-      std::stringstream ss;
-      ss << "failsafe activated (parachute): '" << message << "'";
+    // check if the tracker is already active
+    if (new_tracker_idx.value() == active_tracker_idx) {
+      ss << "not switching, the tracker '" << tracker_name
+         << "' is already active!";
       RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
+      return std::tuple(true, ss.str());
+    }
+
+    {
+      std::scoped_lock lock(mutex_tracker_list_);
+
+      try {
+        RCLCPP_INFO(node_->get_logger(), "activating the tracker '%s'",
+                    _tracker_names_.at(new_tracker_idx.value()).c_str());
+
+        auto [success, message] = tracker_list_.at(new_tracker_idx.value())
+                                      ->activate(last_tracker_cmd);
+
+        if (!success) {
+          ss << "the tracker '" << tracker_name << "' could not be activated: '"
+             << message << "'";
+          RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
+          return std::tuple(false, ss.str());
+
+        } else {
+          ss << "the tracker '" << tracker_name << "' was activated";
+          RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
+
+          {
+            std::scoped_lock lock(mutex_controller_tracker_switch_time_);
+
+            // update the time (used in failsafe)
+            controller_tracker_switch_time_ = clock_->now();
+          }
+
+          // super important, switch the active tracker idx
+          try {
+            RCLCPP_INFO(node_->get_logger(), "deactivating '%s'",
+                        _tracker_names_.at(active_tracker_idx_).c_str());
+            tracker_list_.at(active_tracker_idx_)->deactivate();
+
+            // if switching from null tracker, re-activate the already active
+            // the controller
+            if (active_tracker_idx_ == _null_tracker_idx_) {
+              RCLCPP_INFO(
+                  node_->get_logger(),
+                  "reactivating '%s' due to switching from 'NullTracker'",
+                  _controller_names_.at(active_controller_idx_).c_str());
+              {
+                std::scoped_lock lock(mutex_controller_list_);
+
+                initializeControlOutput();
+
+                auto last_control_output = mrs_lib::get_mutexed(
+                    mutex_last_control_output_, last_control_output_);
+
+                controller_list_.at(active_controller_idx_)
+                    ->activate(last_control_output);
+
+                {
+                  std::scoped_lock lock(mutex_controller_tracker_switch_time_);
+
+                  // update the time (used in failsafe)
+                  controller_tracker_switch_time_ = clock_->now();
+                }
+              }
+
+              // if switching to null tracker, deactivate the active controller
+            } else if (new_tracker_idx == _null_tracker_idx_) {
+              RCLCPP_INFO(
+                  node_->get_logger(),
+                  "deactivating '%s' due to switching to 'NullTracker'",
+                  _controller_names_.at(active_controller_idx_).c_str());
+              {
+                std::scoped_lock lock(mutex_controller_list_);
+
+                controller_list_.at(active_controller_idx_)->deactivate();
+              }
+
+              {
+                std::scoped_lock lock(mutex_last_tracker_cmd_);
+
+                last_tracker_cmd_ = {};
+              }
+
+              initializeControlOutput();
+            }
+
+            active_tracker_idx_ = new_tracker_idx.value();
+          } catch (std::runtime_error& exrun) {
+            RCLCPP_ERROR(node_->get_logger(),
+                         "could not deactivate the tracker '%s'",
+                         _tracker_names_.at(active_tracker_idx_).c_str());
+          }
+        }
+      } catch (std::runtime_error& exrun) {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "error during activation of the tracker '%s'",
+                     tracker_name.c_str());
+        RCLCPP_ERROR(node_->get_logger(), "exception: '%s'", exrun.what());
+      }
+    }
+
+    publishDiagnostics();
+
+    return std::tuple(true, ss.str());
+  }
+
+  //}
+
+  /* switchController() //{ */
+
+  std::tuple<bool, std::string> ControlManager::switchController(
+      const std::string& controller_name) {
+    mrs_lib::Routine profiler_routine =
+        profiler_.createRoutine("switchController");
+    mrs_lib::ScopeTimer timer =
+        mrs_lib::ScopeTimer(node_, "ControlManager::switchController",
+                            scope_timer_logger_, scope_timer_enabled_);
+
+    // copy member variables
+    auto last_control_output =
+        mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
+    auto active_controller_idx =
+        mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
+
+    std::stringstream ss;
+
+    if (!got_uav_state_) {
+      ss << "can not switch controller, missing odometry!";
+      RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
+      return std::tuple(false, ss.str());
+    }
+
+    if (_state_input_ == INPUT_UAV_STATE &&
+        _odometry_innovation_check_enabled_ &&
+        !sh_odometry_innovation_.hasMsg()) {
+      ss << "can not switch controller, missing odometry innovation!";
+      RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
+      return std::tuple(false, ss.str());
+    }
+
+    auto new_controller_idx = idxInVector(controller_name, _controller_names_);
+
+    // check if the controller exists
+    if (!new_controller_idx) {
+      ss << "the controller '" << controller_name << "' does not exist!";
+      RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
+      return std::tuple(false, ss.str());
+    }
+
+    // check if the controller is not active
+    if (new_controller_idx.value() == active_controller_idx) {
+      ss << "not switching, the controller '" << controller_name
+         << "' is already active!";
+      RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
+      return std::tuple(true, ss.str());
+    }
+
+    {
+      std::scoped_lock lock(mutex_controller_list_);
+
+      try {
+        RCLCPP_INFO(node_->get_logger(), "activating the controller '%s'",
+                    _controller_names_.at(new_controller_idx.value()).c_str());
+        if (!controller_list_.at(new_controller_idx.value())
+                 ->activate(last_control_output)) {
+          ss << "the controller '" << controller_name << "' was not activated";
+          RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
+          return std::tuple(false, ss.str());
+
+        } else {
+          ss << "the controller '" << controller_name << "' was activated";
+          RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
+
+          RCLCPP_INFO(
+              node_->get_logger(),
+              "triggering hover after switching to '%s', re-activating '%s'",
+              _controller_names_.at(new_controller_idx.value()).c_str(),
+              _tracker_names_.at(active_tracker_idx_).c_str());
+
+          // reactivate the current tracker
+          // TODO this is not the most elegant way to restart the tracker after
+          // a controller switch but it serves the purpose
+          {
+            std::scoped_lock lock(mutex_tracker_list_);
+
+            tracker_list_.at(active_tracker_idx_)->deactivate();
+            tracker_list_.at(active_tracker_idx_)->activate({});
+          }
+
+          {
+            std::scoped_lock lock(mutex_controller_tracker_switch_time_);
+
+            // update the time (used in failsafe)
+            controller_tracker_switch_time_ = clock_->now();
+          }
+
+          // super important, switch the active controller idx
+          try {
+            controller_list_.at(active_controller_idx_)->deactivate();
+            active_controller_idx_ = new_controller_idx.value();
+          } catch (std::runtime_error& exrun) {
+            RCLCPP_ERROR(node_->get_logger(),
+                         "could not deactivate controller '%s'",
+                         _controller_names_.at(active_controller_idx_).c_str());
+          }
+        }
+      } catch (std::runtime_error& exrun) {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "error during activation of controller '%s'",
+                     controller_name.c_str());
+        RCLCPP_ERROR(node_->get_logger(), "exception: '%s'", exrun.what());
+      }
+    }
+
+    mrs_msgs::srv::DynamicsConstraintsSrv::Request sanitized_constraints;
+
+    {
+      std::scoped_lock lock(mutex_constraints_);
+
+      sanitized_constraints_ = current_constraints_;
+      sanitized_constraints = sanitized_constraints_;
+    }
+
+    setConstraintsToControllers(sanitized_constraints);
+
+    publishDiagnostics();
+
+    return std::tuple(true, ss.str());
+  }
+
+  //}
+
+  /* updateTrackers() //{ */
+
+  void ControlManager::updateTrackers(void) {
+    mrs_lib::Routine profiler_routine =
+        profiler_.createRoutine("updateTrackers");
+    mrs_lib::ScopeTimer timer =
+        mrs_lib::ScopeTimer(node_, "ControlManager::updateTrackers",
+                            scope_timer_logger_, scope_timer_enabled_);
+
+    // copy member variables
+    auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
+    auto last_control_output =
+        mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
+
+    // --------------------------------------------------------------
+    // |                     Update the trackers                    |
+    // --------------------------------------------------------------
+
+    std::optional<mrs_msgs::msg::TrackerCommand> tracker_command;
+
+    unsigned int active_tracker_idx;
+
+    {
+      std::scoped_lock lock(mutex_tracker_list_);
+
+      active_tracker_idx = active_tracker_idx_;
+
+      // for each tracker
+      for (size_t i = 0; i < tracker_list_.size(); i++) {
+        if (i == active_tracker_idx) {
+          try {
+            // active tracker => update and retrieve the command
+            tracker_command =
+                tracker_list_.at(i)->update(uav_state, last_control_output);
+          } catch (std::runtime_error& exrun) {
+            RCLCPP_ERROR_THROTTLE(
+                node_->get_logger(), *clock_, 1000,
+                "caught an exception while updating the active tracker (%s)",
+                _tracker_names_.at(active_tracker_idx).c_str());
+            RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "the exception: '%s'", exrun.what());
+            tracker_command = {};
+          }
+
+        } else {
+          try {
+            // nonactive tracker => just update without retrieving the command
+            tracker_list_.at(i)->update(uav_state, last_control_output);
+          } catch (std::runtime_error& exrun) {
+            RCLCPP_ERROR_THROTTLE(
+                node_->get_logger(), *clock_, 1000,
+                "caught an exception while updating the tracker '%s'",
+                _tracker_names_.at(i).c_str());
+            RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "the exception: '%s'", exrun.what());
+          }
+        }
+      }
+
+      if (active_tracker_idx == _null_tracker_idx_) {
+        return;
+      }
+    }
+
+    if (validateTrackerCommand(node_, tracker_command, "tracker_command")) {
+      std::scoped_lock lock(mutex_last_tracker_cmd_);
+
+      last_tracker_cmd_ = tracker_command;
+
+      // | --------- fill in the potentially missing header --------- |
+
+      if (last_tracker_cmd_->header.frame_id == "") {
+        last_tracker_cmd_->header.frame_id = uav_state.header.frame_id;
+      }
+
+      if (rclcpp::Time(last_tracker_cmd_->header.stamp).seconds() == 0) {
+        last_tracker_cmd_->header.stamp = clock_->now();
+      }
+
+    } else {
+      if (active_tracker_idx == _ehover_tracker_idx_) {
+        RCLCPP_ERROR_THROTTLE(
+            node_->get_logger(), *clock_, 1000,
+            "the emergency tracker '%s' returned empty or invalid command!",
+            _tracker_names_.at(active_tracker_idx).c_str());
+        failsafe();
+
+      } else {
+        RCLCPP_ERROR_THROTTLE(
+            node_->get_logger(), *clock_, 1000,
+            "the tracker '%s' returned empty or invalid command!",
+            _tracker_names_.at(active_tracker_idx).c_str());
+
+        if (_tracker_error_action_ == ELAND_STR) {
+          eland();
+        } else if (_tracker_error_action_ == EHOVER_STR) {
+          ehover();
+        } else {
+          failsafe();
+        }
+      }
+    }
+  }
+
+  //}
+
+  /* updateControllers() //{ */
+
+  void ControlManager::updateControllers(
+      const mrs_msgs::msg::UavState& uav_state) {
+    mrs_lib::Routine profiler_routine =
+        profiler_.createRoutine("updateControllers");
+    mrs_lib::ScopeTimer timer =
+        mrs_lib::ScopeTimer(node_, "ControlManager::updateControllers",
+                            scope_timer_logger_, scope_timer_enabled_);
+
+    // copy member variables
+    auto last_tracker_cmd =
+        mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
+
+    // | ----------------- update the controllers ----------------- |
+
+    // the trackers are not running
+    if (!last_tracker_cmd) {
+      {
+        std::scoped_lock lock(mutex_controller_list_);
+
+        // nonactive controller => just update without retrieving the command
+        for (int i = 0; i < int(controller_list_.size()); i++) {
+          controller_list_.at(i)->updateInactive(uav_state, last_tracker_cmd);
+        }
+      }
+
+      return;
+    }
+
+    Controller::ControlOutput control_output;
+
+    unsigned int active_controller_idx;
+
+    {
+      std::scoped_lock lock(mutex_controller_list_);
+
+      active_controller_idx = active_controller_idx_;
+
+      // for each controller
+      for (size_t i = 0; i < controller_list_.size(); i++) {
+        if (i == active_controller_idx) {
+          try {
+            // active controller => update and retrieve the command
+            control_output =
+                controller_list_.at(active_controller_idx)
+                    ->updateActive(uav_state, last_tracker_cmd.value());
+          } catch (std::runtime_error& exrun) {
+            RCLCPP_ERROR_THROTTLE(
+                node_->get_logger(), *clock_, 1000,
+                "an exception while updating the active controller (%s)",
+                _controller_names_.at(active_controller_idx).c_str());
+            RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "the exception: '%s'", exrun.what());
+          }
+
+        } else {
+          try {
+            // nonactive controller => just update without retrieving the
+            // command
+            controller_list_.at(i)->updateInactive(uav_state, last_tracker_cmd);
+          } catch (std::runtime_error& exrun) {
+            RCLCPP_ERROR_THROTTLE(
+                node_->get_logger(), *clock_, 1000,
+                "exception while updating the controller '%s'",
+                _controller_names_.at(i).c_str());
+            RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "exception: '%s'", exrun.what());
+          }
+        }
+      }
+    }
+
+    // normally, the active controller returns a valid command
+    if (validateControlOutput(node_, control_output, _hw_api_inputs_,
+                              "control_output")) {
+      mrs_lib::set_mutexed(mutex_last_control_output_, control_output,
+                           last_control_output_);
+
+      // but it can return an empty command, due to some critical internal error
+      // which means we should trigger the failsafe landing
+    } else {
+      // only if the controller is still active, trigger escalating failsafe
+      // if not active, we don't care, we should not ask the controller for
+      // the result anyway -> this could mean a race condition occured
+      // like it once happend during landing
+      bool controller_status = false;
+
+      {
+        std::scoped_lock lock(mutex_controller_list_);
+
+        controller_status =
+            controller_list_.at(active_controller_idx)->getStatus().active;
+      }
+
+      if (controller_status) {
+        if (failsafe_triggered_) {
+          RCLCPP_ERROR(node_->get_logger(),
+                       "disabling control, the active controller returned an "
+                       "empty command when failsafe was active");
+
+          toggleOutput(false);
+
+        } else if (eland_triggered_) {
+          RCLCPP_ERROR(node_->get_logger(),
+                       "triggering failsafe, the active controller returned an "
+                       "empty command when eland was active");
+
+          failsafe();
+
+        } else {
+          RCLCPP_ERROR(node_->get_logger(),
+                       "triggering eland, the active controller returned an "
+                       "empty command");
+
+          eland();
+        }
+      }
+    }
+  }
+
+  //}
+
+  /* publish() //{ */
+
+  void ControlManager::publish(void) {
+    mrs_lib::Routine profiler_routine = profiler_.createRoutine("publish");
+    mrs_lib::ScopeTimer timer =
+        mrs_lib::ScopeTimer(node_, "ControlManager::publish",
+                            scope_timer_logger_, scope_timer_enabled_);
+
+    // copy member variables
+    auto last_control_output =
+        mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
+    auto last_tracker_cmd =
+        mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
+    auto active_tracker_idx =
+        mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
+    auto active_controller_idx =
+        mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
+    auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
+
+    publishControlReferenceOdom(last_tracker_cmd, last_control_output);
+
+    // --------------------------------------------------------------
+    // |                 Publish the control command                |
+    // --------------------------------------------------------------
+
+    mrs_msgs::msg::HwApiAttitudeCmd attitude_target;
+    attitude_target.stamp = clock_->now();
+
+    if (!output_enabled_) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                           "output is disabled");
+
+    } else if (active_tracker_idx == _null_tracker_idx_) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 5000,
+                           "'NullTracker' is active, not controlling");
+
+      Controller::HwApiOutputVariant output = initializeDefaultOutput(
+          node_, _hw_api_inputs_, uav_state, _min_throttle_null_tracker_,
+          common_handlers_->throttle_model.n_motors);
+
+      {
+        std::scoped_lock lock(mutex_last_control_output_);
+
+        last_control_output_.control_output = output;
+      }
+
+      control_output_publisher_.publish(output);
+
+    } else if (active_tracker_idx != _null_tracker_idx_ &&
+               !last_control_output.control_output) {
+      RCLCPP_WARN_THROTTLE(
+          node_->get_logger(), *clock_, 1000,
+          "the controller '%s' returned nil command, not publishing anything",
+          _controller_names_.at(active_controller_idx).c_str());
+
+      Controller::HwApiOutputVariant output = initializeDefaultOutput(
+          node_, _hw_api_inputs_, uav_state, _min_throttle_null_tracker_,
+          common_handlers_->throttle_model.n_motors);
+
+      control_output_publisher_.publish(output);
+
+    } else if (last_control_output.control_output) {
+      if (validateHwApiAttitudeCmd(node_, attitude_target,
+                                   "publish(): attitude_target")) {
+        control_output_publisher_.publish(
+            last_control_output.control_output.value());
+      } else {
+        RCLCPP_ERROR_THROTTLE(
+            node_->get_logger(), *clock_, 1000,
+            "the attitude cmd is not valid just before publishing!");
+        return;
+      }
+
+    } else {
+      RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                            "not publishing a control command");
+    }
+
+    // | ----------- publish the controller diagnostics ----------- |
+
+    ph_controller_diagnostics_.publish(last_control_output.diagnostics);
+
+    // | --------- publish the applied throttle and thrust -------- |
+
+    auto throttle = extractThrottle(last_control_output);
+
+    if (throttle) {
+      {
+        std_msgs::msg::Float64 msg;
+        msg.data = throttle.value();
+        ph_throttle_.publish(msg);
+      }
+
+      double thrust = mrs_lib::quadratic_throttle_model::throttleToForce(
+          common_handlers_->throttle_model, throttle.value());
+
+      {
+        std_msgs::msg::Float64 msg;
+        msg.data = thrust;
+        ph_thrust_.publish(msg);
+      }
+    }
+
+    // | ----------------- publish tracker command ---------------- |
+
+    if (last_tracker_cmd) {
+      ph_tracker_cmd_.publish(last_tracker_cmd.value());
+    }
+
+    // | --------------- publish the odometry input --------------- |
+
+    if (last_control_output.control_output) {
+      mrs_msgs::msg::EstimatorInput msg;
+
+      msg.header.frame_id = _uav_name_ + "/fcu";
+      msg.header.stamp = clock_->now();
+
+      if (last_control_output.desired_unbiased_acceleration) {
+        msg.control_acceleration.x =
+            last_control_output.desired_unbiased_acceleration.value()(0);
+        msg.control_acceleration.y =
+            last_control_output.desired_unbiased_acceleration.value()(1);
+        msg.control_acceleration.z =
+            last_control_output.desired_unbiased_acceleration.value()(2);
+      }
+
+      if (last_control_output.desired_heading_rate) {
+        msg.control_hdg_rate = last_control_output.desired_heading_rate.value();
+      }
+
+      if (last_control_output.desired_unbiased_acceleration) {
+        ph_mrs_odom_input_.publish(msg);
+      }
+    }
+  }
+
+  //}
+
+  /* deployParachute() //{ */
+
+  std::tuple<bool, std::string> ControlManager::deployParachute(void) {
+    // if not enabled, return false
+    if (!_parachute_enabled_) {
+      std::stringstream ss;
+      ss << "can not deploy parachute, it is disabled";
+      return std::tuple(false, ss.str());
+    }
+
+    // we can not disarm if the drone is not in offboard mode
+    // this is super important!
+    if (!isOffboard()) {
+      std::stringstream ss;
+      ss << "can not deploy parachute, not in offboard mode";
+      return std::tuple(false, ss.str());
+    }
+
+    // call the parachute service
+    bool succ = parachuteSrv();
+
+    // if the deployment was successful,
+    if (succ) {
+      arming(false);
+
+      std::stringstream ss;
+      ss << "parachute deployed";
 
       return std::tuple(true, ss.str());
 
     } else {
       std::stringstream ss;
-      ss << "could not deploy parachute: '" << message
-         << "', continuing with normal failsafe";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
+      ss << "error during deployment of parachute";
+
+      return std::tuple(false, ss.str());
     }
   }
 
-  if (_failsafe_controller_idx_ != active_controller_idx) {
-    try {
-      std::scoped_lock lock(mutex_controller_list_);
+  //}
 
-      RCLCPP_INFO(node_->get_logger(), "activating the controller '%s'",
-                  _failsafe_controller_name_.c_str());
-      controller_list_.at(_failsafe_controller_idx_)
-          ->activate(last_control_output);
+  /* velocityReferenceToReference() //{ */
 
-      {
-        std::scoped_lock lock(mutex_controller_tracker_switch_time_);
+  mrs_msgs::msg::ReferenceStamped ControlManager::velocityReferenceToReference(
+      const mrs_msgs::msg::VelocityReferenceStamped& vel_reference) {
+    auto last_tracker_cmd =
+        mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
+    auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
+    auto current_constraints =
+        mrs_lib::get_mutexed(mutex_constraints_, current_constraints_);
 
-        // update the time (used in failsafe)
-        controller_tracker_switch_time_ = clock_->now();
+    mrs_msgs::msg::ReferenceStamped reference_out;
+
+    reference_out.header = vel_reference.header;
+
+    if (vel_reference.reference.use_heading) {
+      reference_out.reference.heading = vel_reference.reference.heading;
+    } else if (vel_reference.reference.use_heading_rate) {
+      reference_out.reference.heading =
+          mrs_lib::AttitudeConverter(uav_state.pose.orientation).getHeading() +
+          vel_reference.reference.use_heading_rate;
+    } else {
+      reference_out.reference.heading =
+          mrs_lib::AttitudeConverter(uav_state.pose.orientation).getHeading();
+    }
+
+    if (vel_reference.reference.use_altitude) {
+      reference_out.reference.position.z = vel_reference.reference.altitude;
+    } else {
+      double stopping_time_z = 0;
+
+      if (vel_reference.reference.velocity.z >= 0) {
+        stopping_time_z = 1.5 * (fabs(vel_reference.reference.velocity.z) /
+                                 current_constraints.constraints
+                                     .vertical_ascending_acceleration) +
+                          1.0;
+      } else {
+        stopping_time_z = 1.5 * (fabs(vel_reference.reference.velocity.z) /
+                                 current_constraints.constraints
+                                     .vertical_descending_acceleration) +
+                          1.0;
       }
 
-      failsafe_triggered_ = true;
-      RCLCPP_DEBUG(node_->get_logger(), "stopping eland timer");
-      timer_eland_->stop();
-      RCLCPP_DEBUG(node_->get_logger(), "eland timer stopped");
+      reference_out.reference.position.z =
+          last_tracker_cmd->position.z +
+          vel_reference.reference.velocity.z * stopping_time_z;
+    }
 
-      landing_uav_mass_ = getMass();
+    {
+      double stopping_time_x =
+          1.5 * (fabs(vel_reference.reference.velocity.x) /
+                 current_constraints.constraints.horizontal_acceleration) +
+          1.0;
+      double stopping_time_y =
+          1.5 * (fabs(vel_reference.reference.velocity.y) /
+                 current_constraints.constraints.horizontal_acceleration) +
+          1.0;
 
-      eland_triggered_ = false;
-      RCLCPP_DEBUG(node_->get_logger(), "starting failsafe timer");
-      timer_failsafe_->start();
-      RCLCPP_DEBUG(node_->get_logger(), "failsafe timer started");
+      reference_out.reference.position.x =
+          last_tracker_cmd->position.x +
+          vel_reference.reference.velocity.x * stopping_time_x;
+      reference_out.reference.position.y =
+          last_tracker_cmd->position.y +
+          vel_reference.reference.velocity.y * stopping_time_y;
+    }
 
-      bumper_enabled_ = false;
+    return reference_out;
+  }
 
-      odometryCallbacksSrv(false);
+  //}
 
-      callbacks_enabled_ = false;
+  /* publishControlReferenceOdom() //{ */
 
-      RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000,
-                           "the controller '%s' was activated",
-                           _failsafe_controller_name_.c_str());
+  void ControlManager::publishControlReferenceOdom(
+      const std::optional<mrs_msgs::msg::TrackerCommand>& tracker_command,
+      const Controller::ControlOutput& control_output) {
+    if (!tracker_command || !control_output.control_output) {
+      return;
+    }
 
-      // super important, switch the active controller idx
-      try {
-        controller_list_.at(active_controller_idx_)->deactivate();
-        active_controller_idx_ = _failsafe_controller_idx_;
-      } catch (std::runtime_error& exrun) {
+    auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
+
+    nav_msgs::msg::Odometry msg;
+
+    msg.header = tracker_command->header;
+
+    if (tracker_command->use_position_horizontal) {
+      msg.pose.pose.position.x = tracker_command->position.x;
+      msg.pose.pose.position.y = tracker_command->position.y;
+    } else {
+      msg.pose.pose.position.x = uav_state.pose.position.x;
+      msg.pose.pose.position.y = uav_state.pose.position.y;
+    }
+
+    if (tracker_command->use_position_vertical) {
+      msg.pose.pose.position.z = tracker_command->position.z;
+    } else {
+      msg.pose.pose.position.z = uav_state.pose.position.z;
+    }
+
+    // transform the velocity in the reference to the child_frame
+    if (tracker_command->use_velocity_horizontal ||
+        tracker_command->use_velocity_vertical) {
+      msg.child_frame_id = _uav_name_ + "/" + _body_frame_;
+
+      geometry_msgs::msg::Vector3Stamped velocity;
+      velocity.header = tracker_command->header;
+
+      if (tracker_command->use_velocity_horizontal) {
+        velocity.vector.x = tracker_command->velocity.x;
+        velocity.vector.y = tracker_command->velocity.y;
+      }
+
+      if (tracker_command->use_velocity_vertical) {
+        velocity.vector.z = tracker_command->velocity.z;
+      }
+
+      auto res = transformer_->transformSingle(velocity, msg.child_frame_id);
+
+      if (res) {
+        msg.twist.twist.linear.x = res.value().vector.x;
+        msg.twist.twist.linear.y = res.value().vector.y;
+        msg.twist.twist.linear.z = res.value().vector.z;
+      } else {
         RCLCPP_ERROR_THROTTLE(
             node_->get_logger(), *clock_, 1000,
-            "could not deactivate the controller '%s'",
-            _controller_names_.at(active_controller_idx_).c_str());
-      }
-    } catch (std::runtime_error& exrun) {
-      RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                            "error during activation of the controller '%s'",
-                            _failsafe_controller_name_.c_str());
-      RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                            "exception: '%s'", exrun.what());
-    }
-  }
-
-  publishDiagnostics();
-
-  return std::tuple(true, "failsafe activated");
-}
-
-//}
-
-/* escalatingFailsafe() //{ */
-
-std::tuple<bool, std::string> ControlManager::escalatingFailsafe(void) {
-  std::stringstream ss;
-
-  if ((clock_->now() - escalating_failsafe_time_).seconds() <
-      _escalating_failsafe_timeout_) {
-    ss << "too soon for escalating failsafe";
-    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
-                                "" << ss.str());
-
-    return std::tuple(false, ss.str());
-  }
-
-  if (!output_enabled_) {
-    ss << "not escalating failsafe, output is disabled";
-    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
-                                "" << ss.str());
-
-    return std::tuple(false, ss.str());
-  }
-
-  RCLCPP_WARN(node_->get_logger(), "escalating failsafe triggered");
-
-  auto active_tracker_idx =
-      mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
-  auto active_controller_idx =
-      mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
-
-  std::string active_tracker_name = _tracker_names_.at(active_tracker_idx);
-  std::string active_controller_name =
-      _controller_names_.at(active_controller_idx);
-
-  EscalatingFailsafeStates_t next_state = getNextEscFailsafeState();
-
-  escalating_failsafe_time_ = clock_->now();
-
-  switch (next_state) {
-    case ESC_NONE_STATE: {
-      ss << "escalating failsafe has run to impossible situation";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
-                                   "" << ss.str());
-
-      return std::tuple(false,
-                        "escalating failsafe has run to impossible situation");
-
-      break;
-    }
-
-    case ESC_EHOVER_STATE: {
-      ss << "escalating failsafe escalates to ehover";
-      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
-                                  "" << ss.str());
-
-      auto [success, message] = ehover();
-
-      if (success) {
-        state_escalating_failsafe_ = ESC_EHOVER_STATE;
-      }
-
-      return {success, message};
-
-      break;
-    }
-
-    case ESC_ELAND_STATE: {
-      ss << "escalating failsafe escalates to eland";
-      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
-                                  "" << ss.str());
-
-      auto [success, message] = eland();
-
-      if (success) {
-        state_escalating_failsafe_ = ESC_ELAND_STATE;
-      }
-
-      return {success, message};
-
-      break;
-    }
-
-    case ESC_FAILSAFE_STATE: {
-      escalating_failsafe_time_ = clock_->now();
-
-      ss << "escalating failsafe escalates to failsafe";
-      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
-                                  "" << ss.str());
-
-      auto [success, message] = failsafe();
-
-      if (success) {
-        state_escalating_failsafe_ = ESC_FINISHED_STATE;
-      }
-
-      return {success, message};
-
-      break;
-    }
-
-    case ESC_FINISHED_STATE: {
-      escalating_failsafe_time_ = clock_->now();
-
-      ss << "escalating failsafe has nothing more to do";
-      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 100,
-                                  "" << ss.str());
-
-      return std::tuple(false, "escalating failsafe has nothing more to do");
-
-      break;
-    }
-
-    default: {
-      break;
-    }
-  }
-
-  RCLCPP_ERROR(node_->get_logger(),
-               "escalatingFailsafe() reached the final return, this should "
-               "not happen!");
-
-  return std::tuple(false, "escalating failsafe exception");
-}
-
-//}
-
-/* getNextEscFailsafeState() //{ */
-
-EscalatingFailsafeStates_t ControlManager::getNextEscFailsafeState(void) {
-  EscalatingFailsafeStates_t current_state = state_escalating_failsafe_;
-
-  switch (current_state) {
-    case ESC_FINISHED_STATE: {
-      return ESC_FINISHED_STATE;
-
-      break;
-    }
-
-    case ESC_NONE_STATE: {
-      if (_escalating_failsafe_ehover_) {
-        return ESC_EHOVER_STATE;
-      } else if (_escalating_failsafe_eland_) {
-        return ESC_ELAND_STATE;
-      } else if (_escalating_failsafe_failsafe_) {
-        return ESC_FAILSAFE_STATE;
-      } else {
-        return ESC_FINISHED_STATE;
-      }
-
-      break;
-    }
-
-    case ESC_EHOVER_STATE: {
-      if (_escalating_failsafe_eland_) {
-        return ESC_ELAND_STATE;
-      } else if (_escalating_failsafe_failsafe_) {
-        return ESC_FAILSAFE_STATE;
-      } else {
-        return ESC_FINISHED_STATE;
-      }
-
-      break;
-    }
-
-    case ESC_ELAND_STATE: {
-      if (_escalating_failsafe_failsafe_) {
-        return ESC_FAILSAFE_STATE;
-      } else {
-        return ESC_FINISHED_STATE;
-      }
-
-      break;
-    }
-
-    case ESC_FAILSAFE_STATE: {
-      return ESC_FINISHED_STATE;
-
-      break;
-    }
-  }
-
-  RCLCPP_ERROR(node_->get_logger(),
-               "getNextEscFailsafeState() reached the final return, this "
-               "should not happen!");
-
-  return ESC_NONE_STATE;
-}
-
-//}
-
-// | ------------------- trajectory tracking ------------------ |
-
-/* startTrajectoryTracking() //{ */
-
-std::tuple<bool, std::string> ControlManager::startTrajectoryTracking(void) {
-  if (!is_initialized_) {
-    return std::tuple(false, "the ControlManager is not initialized");
-  }
-
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
-
-    std::shared_ptr<std_srvs::srv::Trigger::Request> request =
-        std::make_shared<std_srvs::srv::Trigger::Request>();
-
-    auto response =
-        tracker_list_.at(active_tracker_idx_)->startTrajectoryTracking(request);
-
-    if (response != nullptr) {
-      return std::tuple(response->success, response->message);
-
-    } else {
-      std::stringstream ss;
-      ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
-         << "' does not implement the 'startTrajectoryTracking()' function!";
-
-      return std::tuple(false, ss.str());
-    }
-  }
-}
-
-//}
-
-/* stopTrajectoryTracking() //{ */
-
-std::tuple<bool, std::string> ControlManager::stopTrajectoryTracking(void) {
-  if (!is_initialized_) {
-    return std::tuple(false, "the ControlManager is not initialized");
-  }
-
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
-
-    std::shared_ptr<std_srvs::srv::Trigger::Request> request =
-        std::make_shared<std_srvs::srv::Trigger::Request>();
-
-    auto response =
-        tracker_list_.at(active_tracker_idx_)->stopTrajectoryTracking(request);
-
-    if (response != nullptr) {
-      return std::tuple(response->success, response->message);
-
-    } else {
-      std::stringstream ss;
-      ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
-         << "' does not implement the 'stopTrajectoryTracking()' function!";
-
-      return std::tuple(false, ss.str());
-    }
-  }
-}
-
-//}
-
-/* resumeTrajectoryTracking() //{ */
-
-std::tuple<bool, std::string> ControlManager::resumeTrajectoryTracking(void) {
-  if (!is_initialized_) {
-    return std::tuple(false, "the ControlManager is not initialized");
-  }
-
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
-
-    std::shared_ptr<std_srvs::srv::Trigger::Request> request =
-        std::make_shared<std_srvs::srv::Trigger::Request>();
-
-    auto response = tracker_list_.at(active_tracker_idx_)
-                        ->resumeTrajectoryTracking(request);
-
-    if (response != nullptr) {
-      return std::tuple(response->success, response->message);
-
-    } else {
-      std::stringstream ss;
-      ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
-         << "' does not implement the 'resumeTrajectoryTracking()' function!";
-
-      return std::tuple(false, ss.str());
-    }
-  }
-}
-
-//}
-
-/* gotoTrajectoryStart() //{ */
-
-std::tuple<bool, std::string> ControlManager::gotoTrajectoryStart(void) {
-  if (!is_initialized_) {
-    return std::tuple(false, "the ControlManager is not initialized");
-  }
-
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
-
-    std::shared_ptr<std_srvs::srv::Trigger::Request> request =
-        std::make_shared<std_srvs::srv::Trigger::Request>();
-
-    auto response =
-        tracker_list_.at(active_tracker_idx_)->gotoTrajectoryStart(request);
-
-    if (response != nullptr) {
-      return std::tuple(response->success, response->message);
-
-    } else {
-      std::stringstream ss;
-      ss << "the tracker '" << _tracker_names_.at(active_tracker_idx_)
-         << "' does not implement the 'gotoTrajectoryStart()' function!";
-
-      return std::tuple(false, ss.str());
-    }
-  }
-}
-
-//}
-
-// | ----------------- service client wrappers ---------------- |
-
-/* arming() //{ */
-
-std::tuple<bool, std::string> ControlManager::arming(const bool input) {
-  std::stringstream ss;
-
-  if (input) {
-    ss << "not allowed to arm using the ControlManager, maybe later when we "
-          "don't do bugs";
-    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
-  if (!input && !isOffboard()) {
-    ss << "can not disarm, not in OFFBOARD mode";
-    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
-  if (!input && _rc_emergency_handoff_) {
-    toggleOutput(false);
-
-    return std::tuple(true, "RC emergency handoff is ON, disabling output");
-  }
-
-  std::shared_ptr<std_srvs::srv::SetBool::Request> request =
-      std::make_shared<std_srvs::srv::SetBool::Request>();
-
-  request->data = input ? 1 : 0;  // arm or disarm?
-
-  RCLCPP_INFO(node_->get_logger(), "calling for %s",
-              input ? "arming" : "disarming");
-
-  auto response = sch_arming_.callSync(request);
-
-  if (response) {
-    if (response.value()->success) {
-      ss << "service call for " << (input ? "arming" : "disarming")
-         << " was successful";
-      RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                  "" << ss.str());
-
-      if (!input) {
-        toggleOutput(false);
-
-        RCLCPP_DEBUG(node_->get_logger(), "stopping failsafe timer");
-        timer_failsafe_->stop();
-        RCLCPP_DEBUG(node_->get_logger(), "failsafe timer stopped");
-
-        RCLCPP_DEBUG(node_->get_logger(), "stopping the eland timer");
-        timer_eland_->stop();
-        RCLCPP_DEBUG(node_->get_logger(), "eland timer stopped");
-      }
-
-    } else {
-      ss << "service call for " << (input ? "arming" : "disarming")
-         << " failed";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
-    }
-
-  } else {
-    ss << "calling for " << (input ? "arming" : "disarming")
-       << " resulted in failure: '" << response.value()->message << "'";
-    RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                 "" << ss.str());
-  }
-
-  return std::tuple(response.value()->success, ss.str());
-}
-
-//}
-
-/* odometryCallbacksSrv() //{ */
-
-void ControlManager::odometryCallbacksSrv(const bool input) {
-  RCLCPP_INFO(node_->get_logger(), "switching odometry callbacks to %s",
-              input ? "ON" : "OFF");
-
-  std::shared_ptr<std_srvs::srv::SetBool::Request> request =
-      std::make_shared<std_srvs::srv::SetBool::Request>();
-
-  request->data = input;
-
-  auto response = sch_set_odometry_callbacks_.callSync(request);
-
-  if (response) {
-    if (!response.value()->success) {
-      RCLCPP_WARN(node_->get_logger(),
-                  "service call for toggle odometry callbacks returned: '%s'",
-                  response.value()->message.c_str());
-    }
-
-  } else {
-    RCLCPP_ERROR(node_->get_logger(),
-                 "service call for toggle odometry callbacks failed!");
-  }
-}
-
-//}
-
-/* elandSrv() //{ */
-
-bool ControlManager::elandSrv(void) {
-  RCLCPP_INFO(node_->get_logger(), "calling for eland");
-
-  std::shared_ptr<std_srvs::srv::Trigger::Request> request =
-      std::make_shared<std_srvs::srv::Trigger::Request>();
-
-  auto response = sch_eland_.callSync(request);
-
-  if (response) {
-    if (!response.value()->success) {
-      RCLCPP_WARN(node_->get_logger(), "service call for eland returned: '%s'",
-                  response.value()->message.c_str());
-    }
-
-    return response.value()->success;
-
-  } else {
-    RCLCPP_ERROR(node_->get_logger(), "service call for eland failed!");
-
-    return false;
-  }
-}
-
-//}
-
-/* parachuteSrv() //{ */
-
-bool ControlManager::parachuteSrv(void) {
-  RCLCPP_INFO(node_->get_logger(), "calling for parachute deployment");
-
-  std::shared_ptr<std_srvs::srv::Trigger::Request> request =
-      std::make_shared<std_srvs::srv::Trigger::Request>();
-
-  auto response = sch_parachute_.callSync(request);
-
-  if (response) {
-    if (!response.value()->success) {
-      RCLCPP_WARN(node_->get_logger(),
-                  "service call for parachute deployment returned: '%s'",
-                  response.value()->message.c_str());
-    }
-
-    return response.value()->success;
-
-  } else {
-    RCLCPP_ERROR(node_->get_logger(),
-                 "service call for parachute deployment failed!");
-
-    return false;
-  }
-}
-
-//}
-
-/* ungripSrv() //{ */
-
-void ControlManager::ungripSrv(void) {
-  std::shared_ptr<std_srvs::srv::Trigger::Request> request =
-      std::make_shared<std_srvs::srv::Trigger::Request>();
-
-  auto response = sch_ungrip_.callSync(request);
-
-  if (response) {
-    if (!response.value()->success) {
-      RCLCPP_DEBUG_THROTTLE(
-          node_->get_logger(), *clock_, 1000,
-          "service call for ungripping payload returned: '%s'",
-          response.value()->message.c_str());
-    }
-
-  } else {
-    RCLCPP_DEBUG_THROTTLE(node_->get_logger(), *clock_, 1000,
-                          "service call for ungripping payload failed!");
-  }
-}
-
-//}
-
-// | ------------------------ routines ------------------------ |
-
-/* toggleOutput() //{ */
-
-void ControlManager::toggleOutput(const bool& input) {
-  if (input == output_enabled_) {
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 100,
-                         "output is already %s", input ? "ON" : "OFF");
-    return;
-  }
-
-  RCLCPP_INFO(node_->get_logger(), "switching output %s", input ? "ON" : "OFF");
-
-  output_enabled_ = input;
-
-  // if switching output off, switch to NullTracker
-  if (!output_enabled_) {
-    RCLCPP_INFO(node_->get_logger(),
-                "switching to 'NullTracker' after switching output off");
-
-    switchTracker(_null_tracker_name_);
-
-    RCLCPP_INFO_STREAM(node_->get_logger(),
-                       "switching to the controller '"
-                           << _eland_controller_name_
-                           << "' after switching output off");
-
-    switchController(_eland_controller_name_);
-
-    // | --------- deactivate all trackers and controllers -------- |
-
-    for (int i = 0; i < int(tracker_list_.size()); i++) {
-      std::map<std::string, TrackerParams>::iterator it;
-      it = trackers_.find(_tracker_names_.at(i));
-
-      try {
-        RCLCPP_INFO(node_->get_logger(), "deactivating the tracker '%s'",
-                    it->second.address.c_str());
-        tracker_list_.at(i)->deactivate();
-      } catch (std::runtime_error& ex) {
-        RCLCPP_ERROR(node_->get_logger(),
-                     "exception caught during tracker deactivation: '%s'",
-                     ex.what());
+            "could not transform the reference speed from '%s' to '%s'",
+            velocity.header.frame_id.c_str(), msg.child_frame_id.c_str());
       }
     }
 
-    for (int i = 0; i < int(controller_list_.size()); i++) {
-      std::map<std::string, ControllerParams>::iterator it;
-      it = controllers_.find(_controller_names_.at(i));
-
-      try {
-        RCLCPP_INFO(node_->get_logger(), "deactivating the controller '%s'",
-                    it->second.address.c_str());
-        controller_list_.at(i)->deactivate();
-      } catch (std::runtime_error& ex) {
-        RCLCPP_ERROR(node_->get_logger(),
-                     "exception caught during controller deactivation: '%s'",
-                     ex.what());
-      }
+    // fill in the orientation or heading
+    if (control_output.desired_orientation) {
+      msg.pose.pose.orientation = mrs_lib::AttitudeConverter(
+          control_output.desired_orientation.value());
+    } else if (tracker_command->use_heading) {
+      msg.pose.pose.orientation =
+          mrs_lib::AttitudeConverter(0, 0, tracker_command->heading);
     }
 
-    timer_failsafe_->stop();
-    timer_eland_->stop();
-    timer_pirouette_->stop();
-
-    offboard_mode_was_true_ = false;
-  }
-}
-
-//}
-
-/* switchTracker() //{ */
-
-std::tuple<bool, std::string> ControlManager::switchTracker(
-    const std::string& tracker_name) {
-  mrs_lib::Routine profiler_routine = profiler_.createRoutine("switchTracker");
-  mrs_lib::ScopeTimer timer =
-      mrs_lib::ScopeTimer(node_, "ControlManager::switchTracker",
-                          scope_timer_logger_, scope_timer_enabled_);
-
-  // copy member variables
-  auto last_tracker_cmd =
-      mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
-  auto active_tracker_idx =
-      mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
-
-  std::stringstream ss;
-
-  if (!got_uav_state_) {
-    ss << "can not switch tracker, missing odometry!";
-    RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
-  if (_state_input_ == INPUT_UAV_STATE && _odometry_innovation_check_enabled_ &&
-      !sh_odometry_innovation_.hasMsg()) {
-    ss << "can not switch tracker, missing odometry innovation!";
-    RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
-  auto new_tracker_idx = idxInVector(tracker_name, _tracker_names_);
-
-  // check if the tracker exists
-  if (!new_tracker_idx) {
-    ss << "the tracker '" << tracker_name << "' does not exist!";
-    RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
-  // check if the tracker is already active
-  if (new_tracker_idx.value() == active_tracker_idx) {
-    ss << "not switching, the tracker '" << tracker_name
-       << "' is already active!";
-    RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
-    return std::tuple(true, ss.str());
-  }
-
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
-
-    try {
-      RCLCPP_INFO(node_->get_logger(), "activating the tracker '%s'",
-                  _tracker_names_.at(new_tracker_idx.value()).c_str());
-
-      auto [success, message] =
-          tracker_list_.at(new_tracker_idx.value())->activate(last_tracker_cmd);
-
-      if (!success) {
-        ss << "the tracker '" << tracker_name << "' could not be activated: '"
-           << message << "'";
-        RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
-        return std::tuple(false, ss.str());
-
-      } else {
-        ss << "the tracker '" << tracker_name << "' was activated";
-        RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
-
-        {
-          std::scoped_lock lock(mutex_controller_tracker_switch_time_);
-
-          // update the time (used in failsafe)
-          controller_tracker_switch_time_ = clock_->now();
-        }
-
-        // super important, switch the active tracker idx
-        try {
-          RCLCPP_INFO(node_->get_logger(), "deactivating '%s'",
-                      _tracker_names_.at(active_tracker_idx_).c_str());
-          tracker_list_.at(active_tracker_idx_)->deactivate();
-
-          // if switching from null tracker, re-activate the already active
-          // the controller
-          if (active_tracker_idx_ == _null_tracker_idx_) {
-            RCLCPP_INFO(node_->get_logger(),
-                        "reactivating '%s' due to switching from 'NullTracker'",
-                        _controller_names_.at(active_controller_idx_).c_str());
-            {
-              std::scoped_lock lock(mutex_controller_list_);
-
-              initializeControlOutput();
-
-              auto last_control_output = mrs_lib::get_mutexed(
-                  mutex_last_control_output_, last_control_output_);
-
-              controller_list_.at(active_controller_idx_)
-                  ->activate(last_control_output);
-
-              {
-                std::scoped_lock lock(mutex_controller_tracker_switch_time_);
-
-                // update the time (used in failsafe)
-                controller_tracker_switch_time_ = clock_->now();
-              }
-            }
-
-            // if switching to null tracker, deactivate the active controller
-          } else if (new_tracker_idx == _null_tracker_idx_) {
-            RCLCPP_INFO(node_->get_logger(),
-                        "deactivating '%s' due to switching to 'NullTracker'",
-                        _controller_names_.at(active_controller_idx_).c_str());
-            {
-              std::scoped_lock lock(mutex_controller_list_);
-
-              controller_list_.at(active_controller_idx_)->deactivate();
-            }
-
-            {
-              std::scoped_lock lock(mutex_last_tracker_cmd_);
-
-              last_tracker_cmd_ = {};
-            }
-
-            initializeControlOutput();
-          }
-
-          active_tracker_idx_ = new_tracker_idx.value();
-        } catch (std::runtime_error& exrun) {
-          RCLCPP_ERROR(node_->get_logger(),
-                       "could not deactivate the tracker '%s'",
-                       _tracker_names_.at(active_tracker_idx_).c_str());
-        }
-      }
-    } catch (std::runtime_error& exrun) {
-      RCLCPP_ERROR(node_->get_logger(),
-                   "error during activation of the tracker '%s'",
-                   tracker_name.c_str());
-      RCLCPP_ERROR(node_->get_logger(), "exception: '%s'", exrun.what());
-    }
-  }
-
-  publishDiagnostics();
-
-  return std::tuple(true, ss.str());
-}
-
-//}
-
-/* switchController() //{ */
-
-std::tuple<bool, std::string> ControlManager::switchController(
-    const std::string& controller_name) {
-  mrs_lib::Routine profiler_routine =
-      profiler_.createRoutine("switchController");
-  mrs_lib::ScopeTimer timer =
-      mrs_lib::ScopeTimer(node_, "ControlManager::switchController",
-                          scope_timer_logger_, scope_timer_enabled_);
-
-  // copy member variables
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-  auto active_controller_idx =
-      mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
-
-  std::stringstream ss;
-
-  if (!got_uav_state_) {
-    ss << "can not switch controller, missing odometry!";
-    RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
-  if (_state_input_ == INPUT_UAV_STATE && _odometry_innovation_check_enabled_ &&
-      !sh_odometry_innovation_.hasMsg()) {
-    ss << "can not switch controller, missing odometry innovation!";
-    RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
-  auto new_controller_idx = idxInVector(controller_name, _controller_names_);
-
-  // check if the controller exists
-  if (!new_controller_idx) {
-    ss << "the controller '" << controller_name << "' does not exist!";
-    RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
-  // check if the controller is not active
-  if (new_controller_idx.value() == active_controller_idx) {
-    ss << "not switching, the controller '" << controller_name
-       << "' is already active!";
-    RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
-    return std::tuple(true, ss.str());
-  }
-
-  {
-    std::scoped_lock lock(mutex_controller_list_);
-
-    try {
-      RCLCPP_INFO(node_->get_logger(), "activating the controller '%s'",
-                  _controller_names_.at(new_controller_idx.value()).c_str());
-      if (!controller_list_.at(new_controller_idx.value())
-               ->activate(last_control_output)) {
-        ss << "the controller '" << controller_name << "' was not activated";
-        RCLCPP_ERROR_STREAM(node_->get_logger(), "" << ss.str());
-        return std::tuple(false, ss.str());
-
-      } else {
-        ss << "the controller '" << controller_name << "' was activated";
-        RCLCPP_INFO_STREAM(node_->get_logger(), "" << ss.str());
-
-        RCLCPP_INFO(
-            node_->get_logger(),
-            "triggering hover after switching to '%s', re-activating '%s'",
-            _controller_names_.at(new_controller_idx.value()).c_str(),
-            _tracker_names_.at(active_tracker_idx_).c_str());
-
-        // reactivate the current tracker
-        // TODO this is not the most elegant way to restart the tracker after
-        // a controller switch but it serves the purpose
-        {
-          std::scoped_lock lock(mutex_tracker_list_);
-
-          tracker_list_.at(active_tracker_idx_)->deactivate();
-          tracker_list_.at(active_tracker_idx_)->activate({});
-        }
-
-        {
-          std::scoped_lock lock(mutex_controller_tracker_switch_time_);
-
-          // update the time (used in failsafe)
-          controller_tracker_switch_time_ = clock_->now();
-        }
-
-        // super important, switch the active controller idx
-        try {
-          controller_list_.at(active_controller_idx_)->deactivate();
-          active_controller_idx_ = new_controller_idx.value();
-        } catch (std::runtime_error& exrun) {
-          RCLCPP_ERROR(node_->get_logger(),
-                       "could not deactivate controller '%s'",
-                       _controller_names_.at(active_controller_idx_).c_str());
-        }
-      }
-    } catch (std::runtime_error& exrun) {
-      RCLCPP_ERROR(node_->get_logger(),
-                   "error during activation of controller '%s'",
-                   controller_name.c_str());
-      RCLCPP_ERROR(node_->get_logger(), "exception: '%s'", exrun.what());
-    }
-  }
-
-  mrs_msgs::srv::DynamicsConstraintsSrv::Request sanitized_constraints;
-
-  {
-    std::scoped_lock lock(mutex_constraints_);
-
-    sanitized_constraints_ = current_constraints_;
-    sanitized_constraints = sanitized_constraints_;
-  }
-
-  setConstraintsToControllers(sanitized_constraints);
-
-  publishDiagnostics();
-
-  return std::tuple(true, ss.str());
-}
-
-//}
-
-/* updateTrackers() //{ */
-
-void ControlManager::updateTrackers(void) {
-  mrs_lib::Routine profiler_routine = profiler_.createRoutine("updateTrackers");
-  mrs_lib::ScopeTimer timer =
-      mrs_lib::ScopeTimer(node_, "ControlManager::updateTrackers",
-                          scope_timer_logger_, scope_timer_enabled_);
-
-  // copy member variables
-  auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-
-  // --------------------------------------------------------------
-  // |                     Update the trackers                    |
-  // --------------------------------------------------------------
-
-  std::optional<mrs_msgs::msg::TrackerCommand> tracker_command;
-
-  unsigned int active_tracker_idx;
-
-  {
-    std::scoped_lock lock(mutex_tracker_list_);
-
-    active_tracker_idx = active_tracker_idx_;
-
-    // for each tracker
-    for (size_t i = 0; i < tracker_list_.size(); i++) {
-      if (i == active_tracker_idx) {
-        try {
-          // active tracker => update and retrieve the command
-          tracker_command =
-              tracker_list_.at(i)->update(uav_state, last_control_output);
-        } catch (std::runtime_error& exrun) {
-          RCLCPP_ERROR_THROTTLE(
-              node_->get_logger(), *clock_, 1000,
-              "caught an exception while updating the active tracker (%s)",
-              _tracker_names_.at(active_tracker_idx).c_str());
-          RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "the exception: '%s'", exrun.what());
-          tracker_command = {};
-        }
-
-      } else {
-        try {
-          // nonactive tracker => just update without retrieving the command
-          tracker_list_.at(i)->update(uav_state, last_control_output);
-        } catch (std::runtime_error& exrun) {
-          RCLCPP_ERROR_THROTTLE(
-              node_->get_logger(), *clock_, 1000,
-              "caught an exception while updating the tracker '%s'",
-              _tracker_names_.at(i).c_str());
-          RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "the exception: '%s'", exrun.what());
-        }
-      }
+    // fill in the attitude rate
+    if (std::holds_alternative<mrs_msgs::msg::HwApiAttitudeRateCmd>(
+            control_output.control_output.value())) {
+      auto attitude_cmd = std::get<mrs_msgs::msg::HwApiAttitudeRateCmd>(
+          control_output.control_output.value());
+
+      msg.twist.twist.angular.x = attitude_cmd.body_rate.x;
+      msg.twist.twist.angular.y = attitude_cmd.body_rate.y;
+      msg.twist.twist.angular.z = attitude_cmd.body_rate.z;
     }
 
-    if (active_tracker_idx == _null_tracker_idx_) {
-      return;
-    }
+    ph_control_reference_odom_.publish(msg);
   }
 
-  if (validateTrackerCommand(node_, tracker_command, "tracker_command")) {
-    std::scoped_lock lock(mutex_last_tracker_cmd_);
+  //}
 
-    last_tracker_cmd_ = tracker_command;
+  /* initializeControlOutput() //{ */
 
-    // | --------- fill in the potentially missing header --------- |
+  void ControlManager::initializeControlOutput(void) {
+    Controller::ControlOutput controller_output;
 
-    if (last_tracker_cmd_->header.frame_id == "") {
-      last_tracker_cmd_->header.frame_id = uav_state.header.frame_id;
+    controller_output.diagnostics.total_mass = _uav_mass_;
+    controller_output.diagnostics.mass_difference = 0.0;
+
+    controller_output.diagnostics.disturbance_bx_b =
+        _initial_body_disturbance_x_;
+    controller_output.diagnostics.disturbance_by_b =
+        _initial_body_disturbance_y_;
+
+    if (std::abs(_initial_body_disturbance_x_) > 0.001 ||
+        std::abs(_initial_body_disturbance_y_) > 0.001) {
+      controller_output.diagnostics.disturbance_estimator = true;
     }
 
-    if (rclcpp::Time(last_tracker_cmd_->header.stamp).seconds() == 0) {
-      last_tracker_cmd_->header.stamp = clock_->now();
-    }
+    controller_output.diagnostics.disturbance_wx_w = 0.0;
+    controller_output.diagnostics.disturbance_wy_w = 0.0;
 
-  } else {
-    if (active_tracker_idx == _ehover_tracker_idx_) {
-      RCLCPP_ERROR_THROTTLE(
-          node_->get_logger(), *clock_, 1000,
-          "the emergency tracker '%s' returned empty or invalid command!",
-          _tracker_names_.at(active_tracker_idx).c_str());
-      failsafe();
+    controller_output.diagnostics.disturbance_bx_w = 0.0;
+    controller_output.diagnostics.disturbance_by_w = 0.0;
 
-    } else {
-      RCLCPP_ERROR_THROTTLE(
-          node_->get_logger(), *clock_, 1000,
-          "the tracker '%s' returned empty or invalid command!",
-          _tracker_names_.at(active_tracker_idx).c_str());
+    controller_output.diagnostics.controller = "none";
 
-      if (_tracker_error_action_ == ELAND_STR) {
-        eland();
-      } else if (_tracker_error_action_ == EHOVER_STR) {
-        ehover();
-      } else {
-        failsafe();
-      }
-    }
-  }
-}
-
-//}
-
-/* updateControllers() //{ */
-
-void ControlManager::updateControllers(
-    const mrs_msgs::msg::UavState& uav_state) {
-  mrs_lib::Routine profiler_routine =
-      profiler_.createRoutine("updateControllers");
-  mrs_lib::ScopeTimer timer =
-      mrs_lib::ScopeTimer(node_, "ControlManager::updateControllers",
-                          scope_timer_logger_, scope_timer_enabled_);
-
-  // copy member variables
-  auto last_tracker_cmd =
-      mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
-
-  // | ----------------- update the controllers ----------------- |
-
-  // the trackers are not running
-  if (!last_tracker_cmd) {
-    {
-      std::scoped_lock lock(mutex_controller_list_);
-
-      // nonactive controller => just update without retrieving the command
-      for (int i = 0; i < int(controller_list_.size()); i++) {
-        controller_list_.at(i)->updateInactive(uav_state, last_tracker_cmd);
-      }
-    }
-
-    return;
-  }
-
-  Controller::ControlOutput control_output;
-
-  unsigned int active_controller_idx;
-
-  {
-    std::scoped_lock lock(mutex_controller_list_);
-
-    active_controller_idx = active_controller_idx_;
-
-    // for each controller
-    for (size_t i = 0; i < controller_list_.size(); i++) {
-      if (i == active_controller_idx) {
-        try {
-          // active controller => update and retrieve the command
-          control_output =
-              controller_list_.at(active_controller_idx)
-                  ->updateActive(uav_state, last_tracker_cmd.value());
-        } catch (std::runtime_error& exrun) {
-          RCLCPP_ERROR_THROTTLE(
-              node_->get_logger(), *clock_, 1000,
-              "an exception while updating the active controller (%s)",
-              _controller_names_.at(active_controller_idx).c_str());
-          RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "the exception: '%s'", exrun.what());
-        }
-
-      } else {
-        try {
-          // nonactive controller => just update without retrieving the
-          // command
-          controller_list_.at(i)->updateInactive(uav_state, last_tracker_cmd);
-        } catch (std::runtime_error& exrun) {
-          RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "exception while updating the controller '%s'",
-                                _controller_names_.at(i).c_str());
-          RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "exception: '%s'", exrun.what());
-        }
-      }
-    }
-  }
-
-  // normally, the active controller returns a valid command
-  if (validateControlOutput(node_, control_output, _hw_api_inputs_,
-                            "control_output")) {
-    mrs_lib::set_mutexed(mutex_last_control_output_, control_output,
+    mrs_lib::set_mutexed(mutex_last_control_output_, controller_output,
                          last_control_output_);
-
-    // but it can return an empty command, due to some critical internal error
-    // which means we should trigger the failsafe landing
-  } else {
-    // only if the controller is still active, trigger escalating failsafe
-    // if not active, we don't care, we should not ask the controller for
-    // the result anyway -> this could mean a race condition occured
-    // like it once happend during landing
-    bool controller_status = false;
-
-    {
-      std::scoped_lock lock(mutex_controller_list_);
-
-      controller_status =
-          controller_list_.at(active_controller_idx)->getStatus().active;
-    }
-
-    if (controller_status) {
-      if (failsafe_triggered_) {
-        RCLCPP_ERROR(node_->get_logger(),
-                     "disabling control, the active controller returned an "
-                     "empty command when failsafe was active");
-
-        toggleOutput(false);
-
-      } else if (eland_triggered_) {
-        RCLCPP_ERROR(node_->get_logger(),
-                     "triggering failsafe, the active controller returned an "
-                     "empty command when eland was active");
-
-        failsafe();
-
-      } else {
-        RCLCPP_ERROR(node_->get_logger(),
-                     "triggering eland, the active controller returned an "
-                     "empty command");
-
-        eland();
-      }
-    }
-  }
-}
-
-//}
-
-/* publish() //{ */
-
-void ControlManager::publish(void) {
-  mrs_lib::Routine profiler_routine = profiler_.createRoutine("publish");
-  mrs_lib::ScopeTimer timer =
-      mrs_lib::ScopeTimer(node_, "ControlManager::publish", scope_timer_logger_,
-                          scope_timer_enabled_);
-
-  // copy member variables
-  auto last_control_output =
-      mrs_lib::get_mutexed(mutex_last_control_output_, last_control_output_);
-  auto last_tracker_cmd =
-      mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
-  auto active_tracker_idx =
-      mrs_lib::get_mutexed(mutex_tracker_list_, active_tracker_idx_);
-  auto active_controller_idx =
-      mrs_lib::get_mutexed(mutex_controller_list_, active_controller_idx_);
-  auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
-
-  publishControlReferenceOdom(last_tracker_cmd, last_control_output);
-
-  // --------------------------------------------------------------
-  // |                 Publish the control command                |
-  // --------------------------------------------------------------
-
-  mrs_msgs::msg::HwApiAttitudeCmd attitude_target;
-  attitude_target.stamp = clock_->now();
-
-  if (!output_enabled_) {
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                         "output is disabled");
-
-  } else if (active_tracker_idx == _null_tracker_idx_) {
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 5000,
-                         "'NullTracker' is active, not controlling");
-
-    Controller::HwApiOutputVariant output = initializeDefaultOutput(
-        node_, _hw_api_inputs_, uav_state, _min_throttle_null_tracker_,
-        common_handlers_->throttle_model.n_motors);
-
-    {
-      std::scoped_lock lock(mutex_last_control_output_);
-
-      last_control_output_.control_output = output;
-    }
-
-    control_output_publisher_.publish(output);
-
-  } else if (active_tracker_idx != _null_tracker_idx_ &&
-             !last_control_output.control_output) {
-    RCLCPP_WARN_THROTTLE(
-        node_->get_logger(), *clock_, 1000,
-        "the controller '%s' returned nil command, not publishing anything",
-        _controller_names_.at(active_controller_idx).c_str());
-
-    Controller::HwApiOutputVariant output = initializeDefaultOutput(
-        node_, _hw_api_inputs_, uav_state, _min_throttle_null_tracker_,
-        common_handlers_->throttle_model.n_motors);
-
-    control_output_publisher_.publish(output);
-
-  } else if (last_control_output.control_output) {
-    if (validateHwApiAttitudeCmd(node_, attitude_target,
-                                 "publish(): attitude_target")) {
-      control_output_publisher_.publish(
-          last_control_output.control_output.value());
-    } else {
-      RCLCPP_ERROR_THROTTLE(
-          node_->get_logger(), *clock_, 1000,
-          "the attitude cmd is not valid just before publishing!");
-      return;
-    }
-
-  } else {
-    RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                          "not publishing a control command");
   }
 
-  // | ----------- publish the controller diagnostics ----------- |
-
-  ph_controller_diagnostics_.publish(last_control_output.diagnostics);
-
-  // | --------- publish the applied throttle and thrust -------- |
-
-  auto throttle = extractThrottle(last_control_output);
-
-  if (throttle) {
-    {
-      std_msgs::msg::Float64 msg;
-      msg.data = throttle.value();
-      ph_throttle_.publish(msg);
-    }
-
-    double thrust = mrs_lib::quadratic_throttle_model::throttleToForce(
-        common_handlers_->throttle_model, throttle.value());
-
-    {
-      std_msgs::msg::Float64 msg;
-      msg.data = thrust;
-      ph_thrust_.publish(msg);
-    }
-  }
-
-  // | ----------------- publish tracker command ---------------- |
-
-  if (last_tracker_cmd) {
-    ph_tracker_cmd_.publish(last_tracker_cmd.value());
-  }
-
-  // | --------------- publish the odometry input --------------- |
-
-  if (last_control_output.control_output) {
-    mrs_msgs::msg::EstimatorInput msg;
-
-    msg.header.frame_id = _uav_name_ + "/fcu";
-    msg.header.stamp = clock_->now();
-
-    if (last_control_output.desired_unbiased_acceleration) {
-      msg.control_acceleration.x =
-          last_control_output.desired_unbiased_acceleration.value()(0);
-      msg.control_acceleration.y =
-          last_control_output.desired_unbiased_acceleration.value()(1);
-      msg.control_acceleration.z =
-          last_control_output.desired_unbiased_acceleration.value()(2);
-    }
-
-    if (last_control_output.desired_heading_rate) {
-      msg.control_hdg_rate = last_control_output.desired_heading_rate.value();
-    }
-
-    if (last_control_output.desired_unbiased_acceleration) {
-      ph_mrs_odom_input_.publish(msg);
-    }
-  }
-}
-
-//}
-
-/* deployParachute() //{ */
-
-std::tuple<bool, std::string> ControlManager::deployParachute(void) {
-  // if not enabled, return false
-  if (!_parachute_enabled_) {
-    std::stringstream ss;
-    ss << "can not deploy parachute, it is disabled";
-    return std::tuple(false, ss.str());
-  }
-
-  // we can not disarm if the drone is not in offboard mode
-  // this is super important!
-  if (!isOffboard()) {
-    std::stringstream ss;
-    ss << "can not deploy parachute, not in offboard mode";
-    return std::tuple(false, ss.str());
-  }
-
-  // call the parachute service
-  bool succ = parachuteSrv();
-
-  // if the deployment was successful,
-  if (succ) {
-    arming(false);
-
-    std::stringstream ss;
-    ss << "parachute deployed";
-
-    return std::tuple(true, ss.str());
-
-  } else {
-    std::stringstream ss;
-    ss << "error during deployment of parachute";
-
-    return std::tuple(false, ss.str());
-  }
-}
-
-//}
-
-/* velocityReferenceToReference() //{ */
-
-mrs_msgs::msg::ReferenceStamped ControlManager::velocityReferenceToReference(
-    const mrs_msgs::msg::VelocityReferenceStamped& vel_reference) {
-  auto last_tracker_cmd =
-      mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
-  auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
-  auto current_constraints =
-      mrs_lib::get_mutexed(mutex_constraints_, current_constraints_);
-
-  mrs_msgs::msg::ReferenceStamped reference_out;
-
-  reference_out.header = vel_reference.header;
-
-  if (vel_reference.reference.use_heading) {
-    reference_out.reference.heading = vel_reference.reference.heading;
-  } else if (vel_reference.reference.use_heading_rate) {
-    reference_out.reference.heading =
-        mrs_lib::AttitudeConverter(uav_state.pose.orientation).getHeading() +
-        vel_reference.reference.use_heading_rate;
-  } else {
-    reference_out.reference.heading =
-        mrs_lib::AttitudeConverter(uav_state.pose.orientation).getHeading();
-  }
-
-  if (vel_reference.reference.use_altitude) {
-    reference_out.reference.position.z = vel_reference.reference.altitude;
-  } else {
-    double stopping_time_z = 0;
-
-    if (vel_reference.reference.velocity.x >= 0) {
-      stopping_time_z = 1.5 * (fabs(vel_reference.reference.velocity.z) /
-                               current_constraints.constraints
-                                   .vertical_ascending_acceleration) +
-                        1.0;
-    } else {
-      stopping_time_z = 1.5 * (fabs(vel_reference.reference.velocity.z) /
-                               current_constraints.constraints
-                                   .vertical_descending_acceleration) +
-                        1.0;
-    }
-
-    reference_out.reference.position.z =
-        last_tracker_cmd->position.z +
-        vel_reference.reference.velocity.z * stopping_time_z;
-  }
-
-  {
-    double stopping_time_x =
-        1.5 * (fabs(vel_reference.reference.velocity.x) /
-               current_constraints.constraints.horizontal_acceleration) +
-        1.0;
-    double stopping_time_y =
-        1.5 * (fabs(vel_reference.reference.velocity.y) /
-               current_constraints.constraints.horizontal_acceleration) +
-        1.0;
-
-    reference_out.reference.position.x =
-        last_tracker_cmd->position.x +
-        vel_reference.reference.velocity.x * stopping_time_x;
-    reference_out.reference.position.y =
-        last_tracker_cmd->position.y +
-        vel_reference.reference.velocity.y * stopping_time_y;
-  }
-
-  return reference_out;
-}
-
-//}
-
-/* publishControlReferenceOdom() //{ */
-
-void ControlManager::publishControlReferenceOdom(
-    const std::optional<mrs_msgs::msg::TrackerCommand>& tracker_command,
-    const Controller::ControlOutput& control_output) {
-  if (!tracker_command || !control_output.control_output) {
-    return;
-  }
-
-  auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
-
-  nav_msgs::msg::Odometry msg;
-
-  msg.header = tracker_command->header;
-
-  if (tracker_command->use_position_horizontal) {
-    msg.pose.pose.position.x = tracker_command->position.x;
-    msg.pose.pose.position.y = tracker_command->position.y;
-  } else {
-    msg.pose.pose.position.x = uav_state.pose.position.x;
-    msg.pose.pose.position.y = uav_state.pose.position.y;
-  }
-
-  if (tracker_command->use_position_vertical) {
-    msg.pose.pose.position.z = tracker_command->position.z;
-  } else {
-    msg.pose.pose.position.z = uav_state.pose.position.z;
-  }
-
-  // transform the velocity in the reference to the child_frame
-  if (tracker_command->use_velocity_horizontal ||
-      tracker_command->use_velocity_vertical) {
-    msg.child_frame_id = _uav_name_ + "/" + _body_frame_;
-
-    geometry_msgs::msg::Vector3Stamped velocity;
-    velocity.header = tracker_command->header;
-
-    if (tracker_command->use_velocity_horizontal) {
-      velocity.vector.x = tracker_command->velocity.x;
-      velocity.vector.y = tracker_command->velocity.y;
-    }
-
-    if (tracker_command->use_velocity_vertical) {
-      velocity.vector.z = tracker_command->velocity.z;
-    }
-
-    auto res = transformer_->transformSingle(velocity, msg.child_frame_id);
-
-    if (res) {
-      msg.twist.twist.linear.x = res.value().vector.x;
-      msg.twist.twist.linear.y = res.value().vector.y;
-      msg.twist.twist.linear.z = res.value().vector.z;
-    } else {
-      RCLCPP_ERROR_THROTTLE(
-          node_->get_logger(), *clock_, 1000,
-          "could not transform the reference speed from '%s' to '%s'",
-          velocity.header.frame_id.c_str(), msg.child_frame_id.c_str());
-    }
-  }
-
-  // fill in the orientation or heading
-  if (control_output.desired_orientation) {
-    msg.pose.pose.orientation =
-        mrs_lib::AttitudeConverter(control_output.desired_orientation.value());
-  } else if (tracker_command->use_heading) {
-    msg.pose.pose.orientation =
-        mrs_lib::AttitudeConverter(0, 0, tracker_command->heading);
-  }
-
-  // fill in the attitude rate
-  if (std::holds_alternative<mrs_msgs::msg::HwApiAttitudeRateCmd>(
-          control_output.control_output.value())) {
-    auto attitude_cmd = std::get<mrs_msgs::msg::HwApiAttitudeRateCmd>(
-        control_output.control_output.value());
-
-    msg.twist.twist.angular.x = attitude_cmd.body_rate.x;
-    msg.twist.twist.angular.y = attitude_cmd.body_rate.y;
-    msg.twist.twist.angular.z = attitude_cmd.body_rate.z;
-  }
-
-  ph_control_reference_odom_.publish(msg);
-}
-
-//}
-
-/* initializeControlOutput() //{ */
-
-void ControlManager::initializeControlOutput(void) {
-  Controller::ControlOutput controller_output;
-
-  controller_output.diagnostics.total_mass = _uav_mass_;
-  controller_output.diagnostics.mass_difference = 0.0;
-
-  controller_output.diagnostics.disturbance_bx_b = _initial_body_disturbance_x_;
-  controller_output.diagnostics.disturbance_by_b = _initial_body_disturbance_y_;
-
-  if (std::abs(_initial_body_disturbance_x_) > 0.001 ||
-      std::abs(_initial_body_disturbance_y_) > 0.001) {
-    controller_output.diagnostics.disturbance_estimator = true;
-  }
-
-  controller_output.diagnostics.disturbance_wx_w = 0.0;
-  controller_output.diagnostics.disturbance_wy_w = 0.0;
-
-  controller_output.diagnostics.disturbance_bx_w = 0.0;
-  controller_output.diagnostics.disturbance_by_w = 0.0;
-
-  controller_output.diagnostics.controller = "none";
-
-  mrs_lib::set_mutexed(mutex_last_control_output_, controller_output,
-                       last_control_output_);
-}
-
-//}
+  //}
 
 }  // namespace control_manager
 

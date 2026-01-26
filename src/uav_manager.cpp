@@ -2742,9 +2742,6 @@ std::tuple<bool, std::string> UavManager::midairActivationImpl(void) {
 /* setOdometryCallbacksSrv() //{ */
 
 void UavManager::setOdometryCallbacksSrv(const bool& input) {
-  RCLCPP_INFO(node_->get_logger(), "switching odometry callbacks to %s",
-              input ? "ON" : "OFF");
-
   std::shared_ptr<std_srvs::srv::SetBool::Request> request =
       std::make_shared<std_srvs::srv::SetBool::Request>();
 
@@ -2770,9 +2767,6 @@ void UavManager::setOdometryCallbacksSrv(const bool& input) {
 /* setControlCallbacksSrv() //{ */
 
 void UavManager::setControlCallbacksSrv(const bool& input) {
-  RCLCPP_INFO(node_->get_logger(), "switching control callbacks to %s",
-              input ? "ON" : "OFF");
-
   std::shared_ptr<std_srvs::srv::SetBool::Request> request =
       std::make_shared<std_srvs::srv::SetBool::Request>();
 
@@ -2824,9 +2818,6 @@ void UavManager::ungripSrv(void) {
 /* toggleControlOutput() //{ */
 
 bool UavManager::toggleControlOutput(const bool& input) {
-  RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000,
-                       "toggling control output %s", input ? "ON" : "OFF");
-
   std::shared_ptr<std_srvs::srv::SetBool::Request> request =
       std::make_shared<std_srvs::srv::SetBool::Request>();
 
@@ -2911,9 +2902,6 @@ void UavManager::disarmSrv(void) {
 /* switchControllerSrv() //{ */
 
 bool UavManager::switchControllerSrv(const std::string& controller) {
-  RCLCPP_INFO_STREAM(node_->get_logger(),
-                     "activating controller '" << controller << "'");
-
   std::shared_ptr<mrs_msgs::srv::String::Request> request =
       std::make_shared<mrs_msgs::srv::String::Request>();
 
@@ -2943,9 +2931,6 @@ bool UavManager::switchControllerSrv(const std::string& controller) {
 /* switchTrackerSrv() //{ */
 
 bool UavManager::switchTrackerSrv(const std::string& tracker) {
-  RCLCPP_INFO_STREAM(node_->get_logger(),
-                     "activating tracker '" << tracker << "'");
-
   std::shared_ptr<mrs_msgs::srv::String::Request> request =
       std::make_shared<mrs_msgs::srv::String::Request>();
 
@@ -3089,9 +3074,6 @@ bool UavManager::takeoffSrv(void) {
 
 bool UavManager::emergencyReferenceSrv(
     const mrs_msgs::msg::ReferenceStamped& goal) {
-  RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000,
-                       "calling for emergency reference");
-
   std::shared_ptr<mrs_msgs::srv::ReferenceStampedSrv::Request> request =
       std::make_shared<mrs_msgs::srv::ReferenceStampedSrv::Request>();
 
