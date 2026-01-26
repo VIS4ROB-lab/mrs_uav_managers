@@ -1,9 +1,9 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.22)
 project(mrs_uav_managers)
 
 # set the correct standards
 set(CMAKE_C_STANDARD 99)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -333,28 +333,13 @@ set_target_properties(MrsUavManagers_MrsUavManagers
 )
 
 target_sources(MrsUavManagers_MrsUavManagers
-  INTERFACE FILE_SET HEADERS BASE_DIRS "include"
-  FILES
-    # include/control_manager
-    "include/control_manager/output_publisher.h"
-    # include/mrs_uav_managers
-    "include/mrs_uav_managers/agl_estimator.h"
-    "include/mrs_uav_managers/controller.h"
-    "include/mrs_uav_managers/state_estimator.h"
-    "include/mrs_uav_managers/tracker.h"
-    # include/mrs_uav_managers/control_manager
-    "include/mrs_uav_managers/control_manager/common_handlers.h"
-    "include/mrs_uav_managers/control_manager/common.h"
-    "include/mrs_uav_managers/control_manager/private_handlers.h"
-    # include/mrs_uav_managers/estimation_manager
-    "include/mrs_uav_managers/estimation_manager/common_handlers.h"
-    "include/mrs_uav_managers/estimation_manager/estimator.h"
-    "include/mrs_uav_managers/estimation_manager/private_handlers.h"
-    "include/mrs_uav_managers/estimation_manager/support.h"
-    "include/mrs_uav_managers/estimation_manager/types.h"
-    # include/transform_manager
-    "include/transform_manager/tf_mapping_origin.h"
-    "include/transform_manager/tf_source.h"
+  INTERFACE
+)
+
+target_include_directories(MrsUavManagers_MrsUavManagers
+  INTERFACE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
 )
 
 target_link_libraries(MrsUavManagers_MrsUavManagers
@@ -408,7 +393,11 @@ install(
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
-  FILE_SET HEADERS DESTINATION "include/${PROJECT_NAME}"
+)
+
+install(
+  DIRECTORY include/
+  DESTINATION "include"
 )
 
 install(
