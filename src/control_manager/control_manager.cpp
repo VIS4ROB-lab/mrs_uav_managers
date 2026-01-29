@@ -6616,11 +6616,11 @@ std::tuple<bool, std::string> ControlManager::setReference(
     from_point.reference.position.z = last_tracker_cmd->position.z;
 
     if (!isPathToPointInSafetyArea3d(from_point, transformed_reference)) {
-      ss << "failed to set the reference, the path is going outside the safety "
-            "area!";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
-      return std::tuple(false, ss.str());
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                           "Reference point outside safety area, correcting to "
+                           "closest valid point");
+      transformed_reference =
+          getClosestPointInSafetyArea3d(transformed_reference);
     }
   }
 
@@ -6798,11 +6798,10 @@ std::tuple<bool, std::string> ControlManager::setVelocityReference(
     from_point.reference.position.z = last_tracker_cmd->position.z;
 
     if (!isPathToPointInSafetyArea3d(from_point, eqivalent_reference)) {
-      ss << "failed to set the reference, the path is going outside the safety "
-            "area!";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
-      return std::tuple(false, ss.str());
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                           "Reference point outside safety area, correcting to "
+                           "closest valid point");
+      eqivalent_reference = getClosestPointInSafetyArea3d(eqivalent_reference);
     }
   }
 
