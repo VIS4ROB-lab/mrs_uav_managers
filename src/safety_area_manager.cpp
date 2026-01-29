@@ -25,6 +25,7 @@
 #include <mrs_msgs/msg/float64_stamped.hpp>
 #include <mrs_msgs/msg/hw_api_capabilities.hpp>
 #include <mrs_msgs/msg/point2_d.hpp>
+#include <mrs_msgs/msg/reference.hpp>
 #include <mrs_msgs/msg/reference_stamped.hpp>
 #include <mrs_msgs/msg/safety_area_manager_diagnostics.hpp>
 #include <mrs_msgs/msg/uav_state.hpp>
@@ -2204,7 +2205,7 @@ bool SafetyAreaManager::callbackGetClosestPoint3d(
   // Transform point to safety area frame
   mrs_msgs::msg::ReferenceStamped point;
   point.header = request->header;
-  point.reference = request->reference;
+  point.reference = request->reference_in;
 
   std::string horizontal_frame =
       safety_zone_handler_.safety_zone->getBorder().getHorizontalFrame();
@@ -2248,9 +2249,9 @@ bool SafetyAreaManager::callbackGetClosestPoint3d(
       response->success = false;
       return true;
     }
-    response->reference = transformed_back->reference;
+    response->reference_out = transformed_back->reference;
   } else {
-    response->reference = closest_point_msg.reference;
+    response->reference_out = closest_point_msg.reference;
   }
 
   response->success = true;
@@ -2284,7 +2285,7 @@ bool SafetyAreaManager::callbackGetClosestPoint2d(
   // Transform point to safety area frame
   mrs_msgs::msg::ReferenceStamped point;
   point.header = request->header;
-  point.reference = request->reference;
+  point.reference = request->reference_in;
 
   std::string horizontal_frame =
       safety_zone_handler_.safety_zone->getBorder().getHorizontalFrame();
@@ -2328,9 +2329,9 @@ bool SafetyAreaManager::callbackGetClosestPoint2d(
       response->success = false;
       return true;
     }
-    response->reference = transformed_back->reference;
+    response->reference_out = transformed_back->reference;
   } else {
-    response->reference = closest_point_msg.reference;
+    response->reference_out = closest_point_msg.reference;
   }
 
   response->success = true;

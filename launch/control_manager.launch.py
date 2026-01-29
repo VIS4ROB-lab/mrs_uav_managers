@@ -331,6 +331,8 @@ def generate_launch_description():
             ("~/point_in_safety_area_3d_out", "safety_area_manager/point_in_safety_area_3d"),
             ("~/path_in_safety_area_2d_out", "safety_area_manager/path_in_safety_area_2d"),
             ("~/path_in_safety_area_3d_out", "safety_area_manager/path_in_safety_area_3d"),
+            ("~/get_closest_point_3d_out", "safety_area_manager/get_closest_point_3d"),
+            ("~/get_closest_point_2d_out", "safety_area_manager/get_closest_point_2d"),
             ("~/get_min_z_out", "safety_area_manager/get_min_z"),
             ("~/get_max_z_out", "safety_area_manager/get_max_z"),
             ("~/is_safety_area_enabled_out", "safety_area_manager/is_safety_zone_enabled"),

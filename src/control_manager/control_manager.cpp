@@ -525,6 +525,10 @@ class ControlManager : public mrs_lib::Node {
       sch_get_min_z_;
   mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetBoolSrv>
       sch_is_safety_area_enabled_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>
+      sc_get_closest_point_3d_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>
+      sc_get_closest_point_2d_;
 
   // safety area min z servers
   mrs_lib::ServiceServerHandler<mrs_msgs::srv::GetFloat64> ss_get_min_z_;
@@ -605,12 +609,6 @@ class ControlManager : public mrs_lib::Node {
   mrs_lib::SubscriberHandler<mrs_msgs::msg::SafetyAreaManagerDiagnostics>
       sh_safety_area_diag_;
 
-  // service clients for safety area
-  mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>
-      sc_get_closest_point_3d_;
-  mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>
-      sc_get_closest_point_2d_;
-
   // those are passed to trackers using the common_handlers object
   bool isPointInSafetyArea2d(const mrs_msgs::msg::ReferenceStamped& point);
   bool isPointInSafetyArea3d(const mrs_msgs::msg::ReferenceStamped& point);
@@ -618,10 +616,8 @@ class ControlManager : public mrs_lib::Node {
                                    const mrs_msgs::msg::ReferenceStamped& to);
   bool isPathToPointInSafetyArea3d(const mrs_msgs::msg::ReferenceStamped& from,
                                    const mrs_msgs::msg::ReferenceStamped& to);
-  std::optional<mrs_msgs::msg::ReferenceStamped> getClosestPointInSafetyArea2d(
-      const mrs_msgs::msg::ReferenceStamped& point);
-  std::optional<mrs_msgs::msg::ReferenceStamped> getClosestPointInSafetyArea3d(
-      const mrs_msgs::msg::ReferenceStamped& point);
+  bool getClosestPointInSafetyArea2d(mrs_msgs::msg::ReferenceStamped& point);
+  bool getClosestPointInSafetyArea3d(mrs_msgs::msg::ReferenceStamped& point);
 
   double getMinZ(const std::string& frame_id);
   double getMaxZ(const std::string& frame_id);
@@ -2262,15 +2258,6 @@ void ControlManager::initialize(void) {
   sh_hw_api_status_ = mrs_lib::SubscriberHandler<mrs_msgs::msg::HwApiStatus>(
       shopts, "~/hw_api_status_in", &ControlManager::callbackHwApiStatus, this);
 
-  // | ------------------- service clients -------------------- |
-
-  sc_get_closest_point_3d_ =
-      mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>(
-          node_, "~/get_closest_point_3d_out", cbkgrp_sc_);
-  sc_get_closest_point_2d_ =
-      mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>(
-          node_, "~/get_closest_point_2d_out", cbkgrp_sc_);
-
   // | -------------------- general services -------------------- |
 
   ss_switch_tracker_ = mrs_lib::ServiceServerHandler<mrs_msgs::srv::String>(
@@ -2456,6 +2443,12 @@ void ControlManager::initialize(void) {
   sch_is_safety_area_enabled_ =
       mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetBoolSrv>(
           node_, "~/is_safety_area_enabled_out", cbkgrp_sc_);
+  sc_get_closest_point_3d_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>(
+          node_, "~/get_closest_point_3d_out", cbkgrp_sc_);
+  sc_get_closest_point_2d_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>(
+          node_, "~/get_closest_point_2d_out", cbkgrp_sc_);
 
   // | ---------------- setpoint command services --------------- |
 
@@ -5966,13 +5959,11 @@ bool ControlManager::callbackValidateReference(
     RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
                          "Reference point outside safety area, correcting to "
                          "closest valid point");
-    auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
-    if (!closest_point) {
+    if (!getClosestPointInSafetyArea3d(transformed_reference)) {
       response->message = "Failed to get closest point in safety area";
       response->success = false;
       return true;
     }
-    transformed_reference = closest_point.value();
   }
 
   if (last_tracker_cmd) {
@@ -5986,13 +5977,11 @@ bool ControlManager::callbackValidateReference(
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
                            "Reference point outside safety area, correcting to "
                            "closest valid point");
-      auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
-      if (!closest_point) {
+      if (!getClosestPointInSafetyArea3d(transformed_reference)) {
         response->message = "Failed to get closest point in safety area";
         response->success = false;
         return true;
       }
-      transformed_reference = closest_point.value();
     }
   }
 
@@ -6050,15 +6039,13 @@ bool ControlManager::callbackValidateReference2d(
 
   if (!isPointInSafetyArea2d(transformed_reference)) {
     RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                         "reference validation: point outside safety area, "
-                         "correcting to closest safe point");
-    auto closest_point = getClosestPointInSafetyArea2d(transformed_reference);
-    if (!closest_point) {
+                         "Reference point outside safety area, correcting to "
+                         "closest valid point");
+    if (!getClosestPointInSafetyArea2d(transformed_reference)) {
       response->message = "Failed to get closest point in safety area";
       response->success = false;
       return true;
     }
-    transformed_reference = closest_point.value();
   }
 
   if (last_tracker_cmd) {
@@ -6070,15 +6057,13 @@ bool ControlManager::callbackValidateReference2d(
 
     if (!isPathToPointInSafetyArea2d(from_point, transformed_reference)) {
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                           "reference validation: point outside safety area, "
-                           "correcting to closest safe point");
-      auto closest_point = getClosestPointInSafetyArea2d(transformed_reference);
-      if (!closest_point) {
+                           "Reference point outside safety area, correcting to "
+                           "closest valid point");
+      if (!getClosestPointInSafetyArea2d(transformed_reference)) {
         response->message = "Failed to get closest point in safety area";
         response->success = false;
         return true;
       }
-      transformed_reference = closest_point.value();
     }
   }
 
@@ -6154,11 +6139,11 @@ bool ControlManager::callbackValidateReferenceArray(
     // | --- check transformed reference agains the safety area --- |
 
     if (!isPointInSafetyArea3d(transformed_reference)) {
-      auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
-      if (!closest_point) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                           "Reference point outside safety area, correcting to "
+                           "closest valid point");
+      if (!getClosestPointInSafetyArea3d(transformed_reference)) {
         response->success.at(i) = false;
-      } else {
-        transformed_reference = closest_point.value();
       }
     }
 
@@ -6172,12 +6157,12 @@ bool ControlManager::callbackValidateReferenceArray(
       from_point.reference.position.z = last_tracker_cmd->position.z;
 
       if (!isPathToPointInSafetyArea3d(from_point, transformed_reference)) {
-        auto closest_point =
-            getClosestPointInSafetyArea3d(transformed_reference);
-        if (!closest_point) {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(), *clock_, 1000,
+            "Reference point outside safety area, correcting to "
+            "closest valid point");
+        if (!getClosestPointInSafetyArea3d(transformed_reference)) {
           response->success.at(i) = false;
-        } else {
-          transformed_reference = closest_point.value();
         }
       }
     }
@@ -6645,14 +6630,14 @@ std::tuple<bool, std::string> ControlManager::setReference(
 
   // safety area check
   if (!isPointInSafetyArea3d(transformed_reference)) {
-    auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
-    if (!closest_point) {
-      ss << "the reference could not be transformed";
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                         "Reference point outside safety area, correcting to "
+                         "closest valid point");
+    if (!getClosestPointInSafetyArea3d(transformed_reference)) {
+      ss << "get closest point in safety area failed 0";
       RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                   "" << ss.str());
       return std::tuple(false, ss.str());
-    } else {
-      transformed_reference = closest_point.value();
     }
   }
 
@@ -6664,14 +6649,14 @@ std::tuple<bool, std::string> ControlManager::setReference(
     from_point.reference.position.z = last_tracker_cmd->position.z;
 
     if (!isPathToPointInSafetyArea3d(from_point, transformed_reference)) {
-      auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
-      if (!closest_point) {
-        ss << "the reference could not be transformed";
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                           "Reference point outside safety area, correcting to "
+                           "closest valid point");
+      if (!getClosestPointInSafetyArea3d(transformed_reference)) {
+        ss << "get closest point in safety area failed 0";
         RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                     "" << ss.str());
         return std::tuple(false, ss.str());
-      } else {
-        transformed_reference = closest_point.value();
       }
     }
   }
@@ -6836,14 +6821,14 @@ std::tuple<bool, std::string> ControlManager::setVelocityReference(
 
   // safety area check
   if (!isPointInSafetyArea3d(eqivalent_reference)) {
-    auto closest_point = getClosestPointInSafetyArea3d(eqivalent_reference);
-    if (!closest_point) {
-      ss << "the reference could not be transformed";
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                         "Reference point outside safety area, correcting to "
+                         "closest valid point");
+    if (!getClosestPointInSafetyArea3d(eqivalent_reference)) {
+      ss << "get closest point in safety area failed 0";
       RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                   "" << ss.str());
       return std::tuple(false, ss.str());
-    } else {
-      eqivalent_reference = closest_point.value();
     }
   }
 
@@ -6855,14 +6840,14 @@ std::tuple<bool, std::string> ControlManager::setVelocityReference(
     from_point.reference.position.z = last_tracker_cmd->position.z;
 
     if (!isPathToPointInSafetyArea3d(from_point, eqivalent_reference)) {
-      auto closest_point = getClosestPointInSafetyArea3d(eqivalent_reference);
-      if (!closest_point) {
-        ss << "the reference could not be transformed";
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                           "Reference point outside safety area, correcting to "
+                           "closest valid point");
+      if (!getClosestPointInSafetyArea3d(eqivalent_reference)) {
+        ss << "get closest point in safety area failed 0";
         RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                     "" << ss.str());
         return std::tuple(false, ss.str());
-      } else {
-        eqivalent_reference = closest_point.value();
       }
     }
   }
@@ -7061,16 +7046,17 @@ ControlManager::setTrajectoryReference(
         des_reference.reference = processed_trajectory.points.at(i);
 
         if (!isPointInSafetyArea3d(des_reference)) {
-          auto closest_point = getClosestPointInSafetyArea3d(des_reference);
-          if (!closest_point) {
+          RCLCPP_WARN_THROTTLE(
+              node_->get_logger(), *clock_, 1000,
+              "Reference point outside safety area, correcting to "
+              "closest valid point");
+          if (!getClosestPointInSafetyArea3d(des_reference)) {
             ss << "the trajectory starts outside of the safety area!";
             RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                         "" << ss.str());
             return std::tuple(false, ss.str(), false,
                               std::vector<std::string>(), std::vector<bool>(),
                               std::vector<std::string>());
-          } else {
-            des_reference = closest_point.value();
           }
         }
         // trajectory_modified = true;
@@ -7131,23 +7117,23 @@ ControlManager::setTrajectoryReference(
                   (j - last_valid_idx) * sin(angle) * step;
 
               if (!isPointInSafetyArea2d(temp_point)) {
-                auto closest_point = getClosestPointInSafetyArea2d(temp_point);
-                if (!closest_point) {
+                RCLCPP_WARN_THROTTLE(
+                    node_->get_logger(), *clock_, 1000,
+                    "Reference point outside safety area, correcting to "
+                    "closest valid point");
+                if (!getClosestPointInSafetyArea2d(temp_point)) {
                   ss << "the trajectory starts outside of the safety area!";
                   RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_,
                                               1000, "" << ss.str());
                   return std::tuple(
                       false, ss.str(), false, std::vector<std::string>(),
                       std::vector<bool>(), std::vector<std::string>());
-                } else {
-                  temp_point = closest_point.value();
                 }
-              } else {
-                processed_trajectory.points.at(j).position.x =
-                    temp_point.reference.position.x;
-                processed_trajectory.points.at(j).position.y =
-                    temp_point.reference.position.y;
               }
+              processed_trajectory.points.at(j).position.x =
+                  temp_point.reference.position.x;
+              processed_trajectory.points.at(j).position.y =
+                  temp_point.reference.position.y;
             }
 
             if (!interpolation_success) {
@@ -7686,48 +7672,54 @@ bool ControlManager::isPointInSafetyArea2d(
 
 /* //{ getClosestPointInSafetyArea3d() */
 
-std::optional<mrs_msgs::msg::ReferenceStamped>
-ControlManager::getClosestPointInSafetyArea3d(
-    const mrs_msgs::msg::ReferenceStamped& point) {
+bool ControlManager::getClosestPointInSafetyArea3d(
+    mrs_msgs::msg::ReferenceStamped& point) {
   // Call the safety area manager service to get the closest point
-  auto request = std::make_shared<mrs_msgs::srv::GetClosestPointSrv::Request>();
+  std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Request> request =
+      std::make_shared<mrs_msgs::srv::GetClosestPointSrv::Request>();
+
   request->header = point.header;
-  request->reference = point.reference;
+  request->reference_in = point.reference;
 
   auto response = sc_get_closest_point_3d_.callSync(request);
-
-  if (response) {
-    mrs_msgs::msg::ReferenceStamped result;
-    result.header = point.header;
-    // result.reference = response->reference;
-    return result;
+  if (!response) {
+    RCLCPP_WARN(node_->get_logger(),
+                "SafetyArea: Service call to get the closest point in the "
+                "safety area failed");
+    return false;
   }
-
-  return std::nullopt;
+  if (response.value()->success) {
+    point.reference = response.value()->reference_out;
+    return true;
+  }
+  return false;
 }
 
 //}
 
 /* //{ getClosestPointInSafetyArea2d() */
 
-std::optional<mrs_msgs::msg::ReferenceStamped>
-ControlManager::getClosestPointInSafetyArea2d(
-    const mrs_msgs::msg::ReferenceStamped& point) {
+bool ControlManager::getClosestPointInSafetyArea2d(
+    mrs_msgs::msg::ReferenceStamped& point) {
   // Call the safety area manager service to get the closest point
-  auto request = std::make_shared<mrs_msgs::srv::GetClosestPointSrv::Request>();
+  std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Request> request =
+      std::make_shared<mrs_msgs::srv::GetClosestPointSrv::Request>();
+
   request->header = point.header;
-  request->reference = point.reference;
+  request->reference_in = point.reference;
 
   auto response = sc_get_closest_point_2d_.callSync(request);
-
-  if (response) {
-    mrs_msgs::msg::ReferenceStamped result;
-    result.header = point.header;
-    // result.reference = response->reference;
-    return result;
+  if (!response) {
+    RCLCPP_WARN(node_->get_logger(),
+                "SafetyArea: Service call to get the closest point in the "
+                "safety area failed");
+    return false;
   }
-
-  return std::nullopt;
+  if (response.value()->success) {
+    point.reference = response.value()->reference_out;
+    return true;
+  }
+  return false;
 }
 
 //}
