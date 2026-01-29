@@ -54,6 +54,7 @@
 #include <mrs_msgs/msg/trajectory_reference.hpp>
 #include <mrs_msgs/srv/float64_stamped_srv.hpp>
 #include <mrs_msgs/srv/get_bool_srv.hpp>
+#include <mrs_msgs/srv/get_closest_point_srv.hpp>
 #include <mrs_msgs/srv/get_float64.hpp>
 #include <mrs_msgs/srv/get_reference_stamped_srv.hpp>
 #include <mrs_msgs/srv/reference_stamped_srv.hpp>
@@ -604,6 +605,12 @@ class ControlManager : public mrs_lib::Node {
   mrs_lib::SubscriberHandler<mrs_msgs::msg::SafetyAreaManagerDiagnostics>
       sh_safety_area_diag_;
 
+  // service clients for safety area
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>
+      sc_get_closest_point_3d_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>
+      sc_get_closest_point_2d_;
+
   // those are passed to trackers using the common_handlers object
   bool isPointInSafetyArea2d(const mrs_msgs::msg::ReferenceStamped& point);
   bool isPointInSafetyArea3d(const mrs_msgs::msg::ReferenceStamped& point);
@@ -611,9 +618,9 @@ class ControlManager : public mrs_lib::Node {
                                    const mrs_msgs::msg::ReferenceStamped& to);
   bool isPathToPointInSafetyArea3d(const mrs_msgs::msg::ReferenceStamped& from,
                                    const mrs_msgs::msg::ReferenceStamped& to);
-  mrs_msgs::msg::ReferenceStamped getClosestPointInSafetyArea2d(
+  std::optional<mrs_msgs::msg::ReferenceStamped> getClosestPointInSafetyArea2d(
       const mrs_msgs::msg::ReferenceStamped& point);
-  mrs_msgs::msg::ReferenceStamped getClosestPointInSafetyArea3d(
+  std::optional<mrs_msgs::msg::ReferenceStamped> getClosestPointInSafetyArea3d(
       const mrs_msgs::msg::ReferenceStamped& point);
 
   double getMinZ(const std::string& frame_id);
@@ -2254,6 +2261,15 @@ void ControlManager::initialize(void) {
 
   sh_hw_api_status_ = mrs_lib::SubscriberHandler<mrs_msgs::msg::HwApiStatus>(
       shopts, "~/hw_api_status_in", &ControlManager::callbackHwApiStatus, this);
+
+  // | ------------------- service clients -------------------- |
+
+  sc_get_closest_point_3d_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>(
+          node_, "~/get_closest_point_3d_out", cbkgrp_sc_);
+  sc_get_closest_point_2d_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>(
+          node_, "~/get_closest_point_2d_out", cbkgrp_sc_);
 
   // | -------------------- general services -------------------- |
 
@@ -5950,8 +5966,13 @@ bool ControlManager::callbackValidateReference(
     RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
                          "Reference point outside safety area, correcting to "
                          "closest valid point");
-    transformed_reference =
-        getClosestPointInSafetyArea3d(transformed_reference);
+    auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
+    if (!closest_point) {
+      response->message = "Failed to get closest point in safety area";
+      response->success = false;
+      return true;
+    }
+    transformed_reference = closest_point.value();
   }
 
   if (last_tracker_cmd) {
@@ -5965,8 +5986,13 @@ bool ControlManager::callbackValidateReference(
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
                            "Reference point outside safety area, correcting to "
                            "closest valid point");
-      transformed_reference =
-          getClosestPointInSafetyArea3d(transformed_reference);
+      auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
+      if (!closest_point) {
+        response->message = "Failed to get closest point in safety area";
+        response->success = false;
+        return true;
+      }
+      transformed_reference = closest_point.value();
     }
   }
 
@@ -6026,8 +6052,13 @@ bool ControlManager::callbackValidateReference2d(
     RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
                          "reference validation: point outside safety area, "
                          "correcting to closest safe point");
-    transformed_reference =
-        getClosestPointInSafetyArea2d(transformed_reference);
+    auto closest_point = getClosestPointInSafetyArea2d(transformed_reference);
+    if (!closest_point) {
+      response->message = "Failed to get closest point in safety area";
+      response->success = false;
+      return true;
+    }
+    transformed_reference = closest_point.value();
   }
 
   if (last_tracker_cmd) {
@@ -6041,8 +6072,13 @@ bool ControlManager::callbackValidateReference2d(
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
                            "reference validation: point outside safety area, "
                            "correcting to closest safe point");
-      transformed_reference =
-          getClosestPointInSafetyArea2d(transformed_reference);
+      auto closest_point = getClosestPointInSafetyArea2d(transformed_reference);
+      if (!closest_point) {
+        response->message = "Failed to get closest point in safety area";
+        response->success = false;
+        return true;
+      }
+      transformed_reference = closest_point.value();
     }
   }
 
@@ -6118,8 +6154,12 @@ bool ControlManager::callbackValidateReferenceArray(
     // | --- check transformed reference agains the safety area --- |
 
     if (!isPointInSafetyArea3d(transformed_reference)) {
-      transformed_reference =
-          getClosestPointInSafetyArea3d(transformed_reference);
+      auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
+      if (!closest_point) {
+        response->success.at(i) = false;
+      } else {
+        transformed_reference = closest_point.value();
+      }
     }
 
     // check the path from the current point (if flying) to the reference
@@ -6132,8 +6172,13 @@ bool ControlManager::callbackValidateReferenceArray(
       from_point.reference.position.z = last_tracker_cmd->position.z;
 
       if (!isPathToPointInSafetyArea3d(from_point, transformed_reference)) {
-        transformed_reference =
+        auto closest_point =
             getClosestPointInSafetyArea3d(transformed_reference);
+        if (!closest_point) {
+          response->success.at(i) = false;
+        } else {
+          transformed_reference = closest_point.value();
+        }
       }
     }
   }
@@ -6600,11 +6645,15 @@ std::tuple<bool, std::string> ControlManager::setReference(
 
   // safety area check
   if (!isPointInSafetyArea3d(transformed_reference)) {
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                         "Reference point outside safety area, correcting to "
-                         "closest valid point");
-    transformed_reference =
-        getClosestPointInSafetyArea3d(transformed_reference);
+    auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
+    if (!closest_point) {
+      ss << "the reference could not be transformed";
+      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "" << ss.str());
+      return std::tuple(false, ss.str());
+    } else {
+      transformed_reference = closest_point.value();
+    }
   }
 
   if (last_tracker_cmd) {
@@ -6615,11 +6664,15 @@ std::tuple<bool, std::string> ControlManager::setReference(
     from_point.reference.position.z = last_tracker_cmd->position.z;
 
     if (!isPathToPointInSafetyArea3d(from_point, transformed_reference)) {
-      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                           "Reference point outside safety area, correcting to "
-                           "closest valid point");
-      transformed_reference =
-          getClosestPointInSafetyArea3d(transformed_reference);
+      auto closest_point = getClosestPointInSafetyArea3d(transformed_reference);
+      if (!closest_point) {
+        ss << "the reference could not be transformed";
+        RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                    "" << ss.str());
+        return std::tuple(false, ss.str());
+      } else {
+        transformed_reference = closest_point.value();
+      }
     }
   }
 
@@ -6783,10 +6836,15 @@ std::tuple<bool, std::string> ControlManager::setVelocityReference(
 
   // safety area check
   if (!isPointInSafetyArea3d(eqivalent_reference)) {
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                         "Reference point outside safety area, correcting to "
-                         "closest valid point");
-    eqivalent_reference = getClosestPointInSafetyArea3d(eqivalent_reference);
+    auto closest_point = getClosestPointInSafetyArea3d(eqivalent_reference);
+    if (!closest_point) {
+      ss << "the reference could not be transformed";
+      RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "" << ss.str());
+      return std::tuple(false, ss.str());
+    } else {
+      eqivalent_reference = closest_point.value();
+    }
   }
 
   if (last_tracker_cmd) {
@@ -6797,10 +6855,15 @@ std::tuple<bool, std::string> ControlManager::setVelocityReference(
     from_point.reference.position.z = last_tracker_cmd->position.z;
 
     if (!isPathToPointInSafetyArea3d(from_point, eqivalent_reference)) {
-      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
-                           "Reference point outside safety area, correcting to "
-                           "closest valid point");
-      eqivalent_reference = getClosestPointInSafetyArea3d(eqivalent_reference);
+      auto closest_point = getClosestPointInSafetyArea3d(eqivalent_reference);
+      if (!closest_point) {
+        ss << "the reference could not be transformed";
+        RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                    "" << ss.str());
+        return std::tuple(false, ss.str());
+      } else {
+        eqivalent_reference = closest_point.value();
+      }
     }
   }
 
@@ -6998,11 +7061,17 @@ ControlManager::setTrajectoryReference(
         des_reference.reference = processed_trajectory.points.at(i);
 
         if (!isPointInSafetyArea3d(des_reference)) {
-          RCLCPP_WARN_THROTTLE(
-              node_->get_logger(), *clock_, 1000,
-              "Reference point outside safety area, correcting to "
-              "closest valid point");
-          des_reference = getClosestPointInSafetyArea3d(des_reference);
+          auto closest_point = getClosestPointInSafetyArea3d(des_reference);
+          if (!closest_point) {
+            ss << "the trajectory starts outside of the safety area!";
+            RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                        "" << ss.str());
+            return std::tuple(false, ss.str(), false,
+                              std::vector<std::string>(), std::vector<bool>(),
+                              std::vector<std::string>());
+          } else {
+            des_reference = closest_point.value();
+          }
         }
         // trajectory_modified = true;
 
@@ -7062,11 +7131,17 @@ ControlManager::setTrajectoryReference(
                   (j - last_valid_idx) * sin(angle) * step;
 
               if (!isPointInSafetyArea2d(temp_point)) {
-                RCLCPP_WARN_THROTTLE(
-                    node_->get_logger(), *clock_, 1000,
-                    "trajectory interpolation: point outside safety area, "
-                    "correcting to closest safe point");
-                temp_point = getClosestPointInSafetyArea2d(temp_point);
+                auto closest_point = getClosestPointInSafetyArea2d(temp_point);
+                if (!closest_point) {
+                  ss << "the trajectory starts outside of the safety area!";
+                  RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_,
+                                              1000, "" << ss.str());
+                  return std::tuple(
+                      false, ss.str(), false, std::vector<std::string>(),
+                      std::vector<bool>(), std::vector<std::string>());
+                } else {
+                  temp_point = closest_point.value();
+                }
               } else {
                 processed_trajectory.points.at(j).position.x =
                     temp_point.reference.position.x;
@@ -7611,282 +7686,48 @@ bool ControlManager::isPointInSafetyArea2d(
 
 /* //{ getClosestPointInSafetyArea3d() */
 
-mrs_msgs::msg::ReferenceStamped ControlManager::getClosestPointInSafetyArea3d(
+std::optional<mrs_msgs::msg::ReferenceStamped>
+ControlManager::getClosestPointInSafetyArea3d(
     const mrs_msgs::msg::ReferenceStamped& point) {
-  mrs_msgs::msg::ReferenceStamped result = point;
+  // Call the safety area manager service to get the closest point
+  auto request = std::make_shared<mrs_msgs::srv::GetClosestPointSrv::Request>();
+  request->header = point.header;
+  request->reference = point.reference;
 
-  if (sh_safety_area_diag_.hasMsg()) {
-    auto msg = sh_safety_area_diag_.getMsg();
+  auto response = sc_get_closest_point_3d_.callSync(request);
 
-    if (!msg->safety_area_enabled) {
-      return result;
-    }
-
-    // Check if already inside
-    if (isPointInSafetyArea3d(point)) {
-      return result;
-    }
-
-    // Convert message points to boost geometry points
-    std::vector<mrs_lib::safety_zone::Point2d> border_geometry_points;
-    for (const auto& pt : msg->border.points) {
-      border_geometry_points.push_back(
-          mrs_lib::safety_zone::Point2d(pt.x, pt.y));
-    }
-
-    // Save frame info before moving
-    std::string horizontal_frame = msg->border.horizontal_frame;
-
-    std::unique_ptr<mrs_lib::safety_zone::Prism> border_prism =
-        std::make_unique<mrs_lib::safety_zone::Prism>(
-            border_geometry_points, msg->border.max_z, msg->border.min_z,
-            msg->border.horizontal_frame, msg->border.vertical_frame);
-    auto safety_zone = std::make_unique<mrs_lib::safety_zone::SafetyZone>(
-        std::move(border_prism));
-
-    // Transform to safety area horizontal frame
-    auto tfed_horizontal =
-        transformer_->transformSingle(point, horizontal_frame);
-
-    if (!tfed_horizontal) {
-      RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                            "SafetyArea: Could not transform the point to the "
-                            "safety area horizontal frame");
-      return result;
-    }
-
-    // Get the polygon border
-    auto border = safety_zone->getBorder();
-    auto border_points = border.getPoints();
-
-    // Find closest point on the polygon border
-    double min_distance = std::numeric_limits<double>::max();
-    double closest_x = tfed_horizontal->reference.position.x;
-    double closest_y = tfed_horizontal->reference.position.y;
-
-    // If point is outside horizontally, project it onto the border
-    if (!safety_zone->isPointValid(tfed_horizontal->reference.position.x,
-                                   tfed_horizontal->reference.position.y)) {
-      // Check distance to each edge of the polygon
-      for (size_t i = 0; i < border_points.size(); i++) {
-        size_t next_i = (i + 1) % border_points.size();
-
-        double x1 = boost::geometry::get<0>(border_points[i]);
-        double y1 = boost::geometry::get<1>(border_points[i]);
-        double x2 = boost::geometry::get<0>(border_points[next_i]);
-        double y2 = boost::geometry::get<1>(border_points[next_i]);
-
-        // Vector from point1 to point2
-        double edge_x = x2 - x1;
-        double edge_y = y2 - y1;
-
-        // Vector from point1 to our point
-        double to_point_x = tfed_horizontal->reference.position.x - x1;
-        double to_point_y = tfed_horizontal->reference.position.y - y1;
-
-        // Project onto the edge
-        double edge_length_sq = edge_x * edge_x + edge_y * edge_y;
-        double t = 0.0;
-
-        if (edge_length_sq > 1e-10) {
-          t = (to_point_x * edge_x + to_point_y * edge_y) / edge_length_sq;
-          t = std::max(0.0, std::min(1.0, t));  // Clamp to [0, 1]
-        }
-
-        // Closest point on this edge
-        double proj_x = x1 + t * edge_x;
-        double proj_y = y1 + t * edge_y;
-
-        // Distance to this projected point
-        double dx = tfed_horizontal->reference.position.x - proj_x;
-        double dy = tfed_horizontal->reference.position.y - proj_y;
-        double distance = std::sqrt(dx * dx + dy * dy);
-
-        if (distance < min_distance) {
-          min_distance = distance;
-          closest_x = proj_x;
-          closest_y = proj_y;
-        }
-      }
-
-      // Move the point slightly inward (10cm) to ensure it's inside
-      double center_x = 0.0;
-      double center_y = 0.0;
-      for (const auto& bp : border_points) {
-        center_x += boost::geometry::get<0>(bp);
-        center_y += boost::geometry::get<1>(bp);
-      }
-      center_x /= border_points.size();
-      center_y /= border_points.size();
-
-      double to_center_x = center_x - closest_x;
-      double to_center_y = center_y - closest_y;
-      double to_center_norm =
-          std::sqrt(to_center_x * to_center_x + to_center_y * to_center_y);
-
-      if (to_center_norm > 1e-6) {
-        closest_x += 0.1 * (to_center_x / to_center_norm);
-        closest_y += 0.1 * (to_center_y / to_center_norm);
-      }
-
-      tfed_horizontal->reference.position.x = closest_x;
-      tfed_horizontal->reference.position.y = closest_y;
-    }
-
-    // Transform back to original frame
-    auto result_in_original =
-        transformer_->transformSingle(*tfed_horizontal, point.header.frame_id);
-
-    if (result_in_original) {
-      result = *result_in_original;
-    }
-
-    // Clamp Z coordinate
-    double min_z = getMinZ(point.header.frame_id);
-    double max_z = getMaxZ(point.header.frame_id);
-
-    if (result.reference.position.z < min_z) {
-      result.reference.position.z = min_z;
-    } else if (result.reference.position.z > max_z) {
-      result.reference.position.z = max_z;
-    }
+  if (response) {
+    mrs_msgs::msg::ReferenceStamped result;
+    result.header = point.header;
+    // result.reference = response->reference;
+    return result;
   }
-  return result;
+
+  return std::nullopt;
 }
 
 //}
 
 /* //{ getClosestPointInSafetyArea2d() */
 
-mrs_msgs::msg::ReferenceStamped ControlManager::getClosestPointInSafetyArea2d(
+std::optional<mrs_msgs::msg::ReferenceStamped>
+ControlManager::getClosestPointInSafetyArea2d(
     const mrs_msgs::msg::ReferenceStamped& point) {
-  mrs_msgs::msg::ReferenceStamped result = point;
+  // Call the safety area manager service to get the closest point
+  auto request = std::make_shared<mrs_msgs::srv::GetClosestPointSrv::Request>();
+  request->header = point.header;
+  request->reference = point.reference;
 
-  if (sh_safety_area_diag_.hasMsg()) {
-    auto msg = sh_safety_area_diag_.getMsg();
+  auto response = sc_get_closest_point_2d_.callSync(request);
 
-    if (!msg->safety_area_enabled) {
-      return result;
-    }
-
-    // Convert message points to boost geometry points
-    std::vector<mrs_lib::safety_zone::Point2d> border_geometry_points;
-    for (const auto& pt : msg->border.points) {
-      border_geometry_points.push_back(
-          mrs_lib::safety_zone::Point2d(pt.x, pt.y));
-    }
-
-    // Save frame info before moving
-    std::string horizontal_frame = msg->border.horizontal_frame;
-
-    std::unique_ptr<mrs_lib::safety_zone::Prism> border_prism =
-        std::make_unique<mrs_lib::safety_zone::Prism>(
-            border_geometry_points, msg->border.max_z, msg->border.min_z,
-            msg->border.horizontal_frame, msg->border.vertical_frame);
-    auto safety_zone = std::make_unique<mrs_lib::safety_zone::SafetyZone>(
-        std::move(border_prism));
-
-    // Transform to safety area horizontal frame
-    auto tfed_horizontal =
-        transformer_->transformSingle(point, horizontal_frame);
-
-    if (!tfed_horizontal) {
-      RCLCPP_ERROR_THROTTLE(
-          node_->get_logger(), *clock_, 1000,
-          "SafetyArea: Could not transform the point to the "
-          "safety area horizontal frame in getClosestPointInSafetyArea2d");
-      return result;
-    }
-
-    double px = tfed_horizontal->reference.position.x;
-    double py = tfed_horizontal->reference.position.y;
-
-    // If point is already inside, return it
-    if (safety_zone->isPointValid(px, py)) {
-      return result;
-    }
-
-    // Point is outside - find closest point on the boundary
-    auto border = safety_zone->getBorder();
-    auto border_points = border.getPoints();
-
-    double closest_x = px;
-    double closest_y = py;
-    double min_distance = std::numeric_limits<double>::max();
-
-    // Iterate through all edges of the polygon
-    for (size_t i = 0; i < border_points.size(); i++) {
-      size_t next_i = (i + 1) % border_points.size();
-
-      double x1 = boost::geometry::get<0>(border_points[i]);
-      double y1 = boost::geometry::get<1>(border_points[i]);
-      double x2 = boost::geometry::get<0>(border_points[next_i]);
-      double y2 = boost::geometry::get<1>(border_points[next_i]);
-
-      // Vector from point1 to point2 of the edge
-      double edge_x = x2 - x1;
-      double edge_y = y2 - y1;
-      double edge_length_sq = edge_x * edge_x + edge_y * edge_y;
-
-      // Vector from point1 to query point
-      double to_point_x = px - x1;
-      double to_point_y = py - y1;
-
-      // Project query point onto the edge (clamped to [0, 1])
-      double t = 0.0;
-      if (edge_length_sq > 1e-10) {
-        t = (to_point_x * edge_x + to_point_y * edge_y) / edge_length_sq;
-        t = std::max(0.0, std::min(1.0, t));
-      }
-
-      // Closest point on this edge
-      double proj_x = x1 + t * edge_x;
-      double proj_y = y1 + t * edge_y;
-
-      // Distance from query point to projected point
-      double dx = px - proj_x;
-      double dy = py - proj_y;
-      double distance = std::sqrt(dx * dx + dy * dy);
-
-      if (distance < min_distance) {
-        min_distance = distance;
-        closest_x = proj_x;
-        closest_y = proj_y;
-      }
-    }
-
-    // Nudge the point slightly inward (10cm) to ensure it's safely inside
-    if (min_distance > 1e-6) {
-      double nudge = 0.1;  // 10cm
-      double dx = px - closest_x;
-      double dy = py - closest_y;
-      double dist = std::sqrt(dx * dx + dy * dy);
-      if (dist > nudge) {
-        closest_x += (dx / dist) * nudge;
-        closest_y += (dy / dist) * nudge;
-      }
-    }
-
-    // Create corrected point in safety area frame
-    mrs_msgs::msg::ReferenceStamped corrected_horizontal = *tfed_horizontal;
-    corrected_horizontal.reference.position.x = closest_x;
-    corrected_horizontal.reference.position.y = closest_y;
-
-    // Transform back to original frame
-    auto tfed_back = transformer_->transformSingle(corrected_horizontal,
-                                                   point.header.frame_id);
-
-    if (!tfed_back) {
-      RCLCPP_ERROR_THROTTLE(
-          node_->get_logger(), *clock_, 1000,
-          "SafetyArea: Could not transform corrected point back "
-          "to original frame in getClosestPointInSafetyArea2d");
-      return result;
-    } else {
-      result = *tfed_back;
-    }
+  if (response) {
+    mrs_msgs::msg::ReferenceStamped result;
+    result.header = point.header;
+    // result.reference = response->reference;
+    return result;
   }
-  return result;
+
+  return std::nullopt;
 }
 
 //}

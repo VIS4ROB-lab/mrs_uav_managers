@@ -29,6 +29,7 @@
 #include <mrs_msgs/msg/safety_area_manager_diagnostics.hpp>
 #include <mrs_msgs/msg/uav_state.hpp>
 #include <mrs_msgs/srv/get_bool_srv.hpp>
+#include <mrs_msgs/srv/get_closest_point_srv.hpp>
 #include <mrs_msgs/srv/get_reference_stamped_srv.hpp>
 #include <mrs_msgs/srv/reference_stamped_srv.hpp>
 #include <mrs_msgs/srv/set_obstacle_srv.hpp>
@@ -154,6 +155,10 @@ class SafetyAreaManager : public mrs_lib::Node {
       ss_is_safety_zone_enabled_;
   mrs_lib::ServiceServerHandler<mrs_msgs::srv::ReferenceStampedSrv>
       ss_update_world_origin_;
+  mrs_lib::ServiceServerHandler<mrs_msgs::srv::GetClosestPointSrv>
+      ss_get_closest_point_3d_;
+  mrs_lib::ServiceServerHandler<mrs_msgs::srv::GetClosestPointSrv>
+      ss_get_closest_point_2d_;
 
   // | --------------------- service clients --------------------- |
 
@@ -243,6 +248,14 @@ class SafetyAreaManager : public mrs_lib::Node {
       const std::shared_ptr<mrs_msgs::srv::ReferenceStampedSrv::Request>
           request,
       const std::shared_ptr<mrs_msgs::srv::ReferenceStampedSrv::Response>
+          response);
+  bool callbackGetClosestPoint3d(
+      const std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Request> request,
+      const std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Response>
+          response);
+  bool callbackGetClosestPoint2d(
+      const std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Request> request,
+      const std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Response>
           response);
 
   // | ----------------------- routines ----------------------- |
@@ -566,6 +579,28 @@ void SafetyAreaManager::initialize() {
                  std::shared_ptr<mrs_msgs::srv::ReferenceStampedSrv::Response>
                      response) {
             callbackUpdateWorldOrigin(request, response);
+          },
+          rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
+
+  ss_get_closest_point_3d_ =
+      mrs_lib::ServiceServerHandler<mrs_msgs::srv::GetClosestPointSrv>(
+          node_, "~/get_closest_point_3d_in",
+          [this](std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Request>
+                     request,
+                 std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Response>
+                     response) {
+            callbackGetClosestPoint3d(request, response);
+          },
+          rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
+
+  ss_get_closest_point_2d_ =
+      mrs_lib::ServiceServerHandler<mrs_msgs::srv::GetClosestPointSrv>(
+          node_, "~/get_closest_point_2d_in",
+          [this](std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Request>
+                     request,
+                 std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Response>
+                     response) {
+            callbackGetClosestPoint2d(request, response);
           },
           rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
 
@@ -1685,10 +1720,9 @@ SafetyAreaManager::transformPoints(
   transformed_points.reserve(points.size());
   mrs_msgs::msg::ReferenceStamped reference_tmp;
 
-  for (const auto &point : points) {
-
-    reference_tmp.header.frame_id      = from_frame;
-    reference_tmp.header.stamp         = rclcpp::Time(0, 0, clock_->get_clock_type());
+  for (const auto& point : points) {
+    reference_tmp.header.frame_id = from_frame;
+    reference_tmp.header.stamp = rclcpp::Time(0, 0, clock_->get_clock_type());
     reference_tmp.reference.position.x = boost::geometry::get<0>(point);
     reference_tmp.reference.position.y = boost::geometry::get<1>(point);
     reference_tmp.reference.position.z = 0;
@@ -2142,6 +2176,166 @@ std::tuple<bool, bool> SafetyAreaManager::isPositionValid(
   }
 
   return std::make_tuple(is_position_valid_2d, is_position_valid_3d);
+}
+
+//}
+
+/* callbackGetClosestPoint3d() //{ */
+
+bool SafetyAreaManager::callbackGetClosestPoint3d(
+    const std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Request> request,
+    const std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Response>
+        response) {
+  if (!is_initialized_) {
+    response->message = "not initialized";
+    response->success = false;
+    return true;
+  }
+
+  std::scoped_lock lock(mutex_safety_area_);
+
+  if (!safety_zone_handler_.safety_zone) {
+    RCLCPP_WARN(node_->get_logger(), "No safety border defined.");
+    response->message = "No safety border defined";
+    response->success = false;
+    return true;
+  }
+
+  // Transform point to safety area frame
+  mrs_msgs::msg::ReferenceStamped point;
+  point.header = request->header;
+  point.reference = request->reference;
+
+  std::string horizontal_frame =
+      safety_zone_handler_.safety_zone->getBorder().getHorizontalFrame();
+  auto tfed_horizontal = transformer_->transformSingle(point, horizontal_frame);
+
+  if (!tfed_horizontal) {
+    RCLCPP_WARN(
+        node_->get_logger(),
+        "Could not transform the point to the safety area horizontal frame");
+    response->message =
+        "Could not transform the point to the safety area horizontal frame";
+    response->success = false;
+    return true;
+  }
+
+  // Get the closest point in 3D
+  mrs_lib::safety_zone::Point3d input_point(
+      tfed_horizontal->reference.position.x,
+      tfed_horizontal->reference.position.y,
+      tfed_horizontal->reference.position.z);
+
+  auto closest_point =
+      safety_zone_handler_.safety_zone->getClosestPoint(input_point);
+
+  // Transform back to original frame if needed
+  mrs_msgs::msg::ReferenceStamped closest_point_msg;
+  closest_point_msg.header.frame_id = horizontal_frame;
+  closest_point_msg.reference.position.x = closest_point.get<0>();
+  closest_point_msg.reference.position.y = closest_point.get<1>();
+  closest_point_msg.reference.position.z = closest_point.get<2>();
+
+  if (request->header.frame_id != horizontal_frame) {
+    auto transformed_back = transformer_->transformSingle(
+        closest_point_msg, request->header.frame_id);
+    if (!transformed_back) {
+      RCLCPP_WARN(
+          node_->get_logger(),
+          "Could not transform the closest point back to the requested frame");
+      response->message =
+          "Could not transform the closest point back to the requested frame";
+      response->success = false;
+      return true;
+    }
+    response->reference = transformed_back->reference;
+  } else {
+    response->reference = closest_point_msg.reference;
+  }
+
+  response->success = true;
+  response->message = "Successfully computed closest point";
+  return true;
+}
+
+//}
+
+/* callbackGetClosestPoint2d() //{ */
+
+bool SafetyAreaManager::callbackGetClosestPoint2d(
+    const std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Request> request,
+    const std::shared_ptr<mrs_msgs::srv::GetClosestPointSrv::Response>
+        response) {
+  if (!is_initialized_) {
+    response->message = "not initialized";
+    response->success = false;
+    return true;
+  }
+
+  std::scoped_lock lock(mutex_safety_area_);
+
+  if (!safety_zone_handler_.safety_zone) {
+    RCLCPP_WARN(node_->get_logger(), "No safety border defined.");
+    response->message = "No safety border defined";
+    response->success = false;
+    return true;
+  }
+
+  // Transform point to safety area frame
+  mrs_msgs::msg::ReferenceStamped point;
+  point.header = request->header;
+  point.reference = request->reference;
+
+  std::string horizontal_frame =
+      safety_zone_handler_.safety_zone->getBorder().getHorizontalFrame();
+  auto tfed_horizontal = transformer_->transformSingle(point, horizontal_frame);
+
+  if (!tfed_horizontal) {
+    RCLCPP_WARN(
+        node_->get_logger(),
+        "Could not transform the point to the safety area horizontal frame");
+    response->message =
+        "Could not transform the point to the safety area horizontal frame";
+    response->success = false;
+    return true;
+  }
+
+  // Get the closest point in 2D
+  mrs_lib::safety_zone::Point2d input_point(
+      tfed_horizontal->reference.position.x,
+      tfed_horizontal->reference.position.y);
+
+  auto closest_point =
+      safety_zone_handler_.safety_zone->getClosestPoint(input_point);
+
+  // Transform back to original frame if needed
+  mrs_msgs::msg::ReferenceStamped closest_point_msg;
+  closest_point_msg.header.frame_id = horizontal_frame;
+  closest_point_msg.reference.position.x = closest_point.get<0>();
+  closest_point_msg.reference.position.y = closest_point.get<1>();
+  closest_point_msg.reference.position.z =
+      tfed_horizontal->reference.position.z;
+
+  if (request->header.frame_id != horizontal_frame) {
+    auto transformed_back = transformer_->transformSingle(
+        closest_point_msg, request->header.frame_id);
+    if (!transformed_back) {
+      RCLCPP_WARN(
+          node_->get_logger(),
+          "Could not transform the closest point back to the requested frame");
+      response->message =
+          "Could not transform the closest point back to the requested frame";
+      response->success = false;
+      return true;
+    }
+    response->reference = transformed_back->reference;
+  } else {
+    response->reference = closest_point_msg.reference;
+  }
+
+  response->success = true;
+  response->message = "Successfully computed closest point";
+  return true;
 }
 
 //}
