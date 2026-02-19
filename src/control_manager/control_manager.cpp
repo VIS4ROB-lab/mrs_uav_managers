@@ -41,6 +41,7 @@
 #include <mrs_msgs/msg/hw_api_capabilities.hpp>
 #include <mrs_msgs/msg/hw_api_control_group_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_position_cmd.hpp>
+#include <mrs_msgs/msg/hw_api_trajectory_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_rc_channels.hpp>
 #include <mrs_msgs/msg/hw_api_status.hpp>
 #include <mrs_msgs/msg/hw_api_velocity_hdg_cmd.hpp>
@@ -2724,6 +2725,11 @@ void ControlManager::timerHwApiCapabilities() {
   if (hw_ap_capabilities->accepts_position_cmd) {
     RCLCPP_INFO(node_->get_logger(), "- position command");
     _hw_api_inputs_.position = true;
+  }
+
+  if (hw_ap_capabilities->accepts_trajectory_cmd) {
+    RCLCPP_INFO(node_->get_logger(), "- trajectory command");
+    _hw_api_inputs_.trajectory = true;
   }
 
   initialize();

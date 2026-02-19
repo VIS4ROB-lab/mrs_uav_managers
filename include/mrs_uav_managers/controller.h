@@ -17,6 +17,7 @@
 #include <mrs_msgs/msg/hw_api_velocity_hdg_rate_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_velocity_hdg_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_position_cmd.hpp>
+#include <mrs_msgs/msg/hw_api_trajectory_cmd.hpp>
 
 #include <mrs_msgs/msg/controller_diagnostics.hpp>
 #include <mrs_msgs/msg/controller_status.hpp>
@@ -34,7 +35,8 @@ class Controller {
 public:
   typedef std::variant<mrs_msgs::msg::HwApiActuatorCmd, mrs_msgs::msg::HwApiControlGroupCmd, mrs_msgs::msg::HwApiAttitudeRateCmd,
                        mrs_msgs::msg::HwApiAttitudeCmd, mrs_msgs::msg::HwApiAccelerationHdgRateCmd, mrs_msgs::msg::HwApiAccelerationHdgCmd,
-                       mrs_msgs::msg::HwApiVelocityHdgRateCmd, mrs_msgs::msg::HwApiVelocityHdgCmd, mrs_msgs::msg::HwApiPositionCmd>
+                       mrs_msgs::msg::HwApiVelocityHdgRateCmd, mrs_msgs::msg::HwApiVelocityHdgCmd, mrs_msgs::msg::HwApiPositionCmd, 
+                       mrs_msgs::msg::HwApiTrajectoryCmd>
       HwApiOutputVariant;
 
   typedef struct

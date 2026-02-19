@@ -30,6 +30,7 @@ private:
   mrs_lib::PublisherHandler<mrs_msgs::msg::HwApiVelocityHdgRateCmd>     ph_hw_api_velocity_hdg_rate_cmd_;
   mrs_lib::PublisherHandler<mrs_msgs::msg::HwApiVelocityHdgCmd>         ph_hw_api_velocity_hdg_cmd_;
   mrs_lib::PublisherHandler<mrs_msgs::msg::HwApiPositionCmd>            ph_hw_api_position_cmd_;
+  mrs_lib::PublisherHandler<mrs_msgs::msg::HwApiTrajectoryCmd>          ph_hw_api_trajectory_cmd_;
 
   void publish(const mrs_msgs::msg::HwApiActuatorCmd &msg);
   void publish(const mrs_msgs::msg::HwApiControlGroupCmd &msg);
@@ -40,7 +41,7 @@ private:
   void publish(const mrs_msgs::msg::HwApiVelocityHdgRateCmd &msg);
   void publish(const mrs_msgs::msg::HwApiVelocityHdgCmd &msg);
   void publish(const mrs_msgs::msg::HwApiPositionCmd &msg);
-
+  void publish(const mrs_msgs::msg::HwApiTrajectoryCmd &msg);
   class PublisherVisitor {
 
   public:

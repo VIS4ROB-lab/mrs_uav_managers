@@ -26,6 +26,7 @@
 #include <mrs_msgs/msg/hw_api_velocity_hdg_rate_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_velocity_hdg_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_position_cmd.hpp>
+#include <mrs_msgs/msg/hw_api_trajectory_cmd.hpp>
 
 #include <mrs_msgs/msg/hw_api_capabilities.hpp>
 
@@ -47,7 +48,8 @@ enum CONTROL_OUTPUT
   ACCELERATION_HDG,
   VELOCITY_HDG_RATE,
   VELOCITY_HDG,
-  POSITION
+  POSITION,
+  TRAJECTORY,
 };
 
 CONTROL_OUTPUT getLowestOuput(const ControlOutputModalities_t &outputs);
@@ -117,6 +119,9 @@ struct HwApiCmdExtractThrottleVisitor
   std::optional<double> operator()([[maybe_unused]] const mrs_msgs::msg::HwApiPositionCmd &msg) {
     return std::nullopt;
   }
+  std::optional<double> operator()([[maybe_unused]] const mrs_msgs::msg::HwApiTrajectoryCmd &msg) {
+    return std::nullopt;
+  }
 };
 
 //}
@@ -137,7 +142,7 @@ bool validateHwApiAccelerationHdgCmd(const rclcpp::Node::SharedPtr &node, const 
 bool validateHwApiVelocityHdgRateCmd(const rclcpp::Node::SharedPtr &node, const mrs_msgs::msg::HwApiVelocityHdgRateCmd &msg, const std::string &var_name);
 bool validateHwApiVelocityHdgCmd(const rclcpp::Node::SharedPtr &node, const mrs_msgs::msg::HwApiVelocityHdgCmd &msg, const std::string &var_name);
 bool validateHwApiPositionCmd(const rclcpp::Node::SharedPtr &node, const mrs_msgs::msg::HwApiPositionCmd &msg, const std::string &var_name);
-
+bool validateHwApiTrajectoryCmd(const rclcpp::Node::SharedPtr &node, const mrs_msgs::msg::HwApiTrajectoryCmd &msg, const std::string &var_name);
 struct HwApiValidateVisitor
 {
   bool operator()(const rclcpp::Node::SharedPtr &node, const mrs_msgs::msg::HwApiActuatorCmd &msg, const ControlOutputModalities_t &output_modalities,
@@ -238,6 +243,17 @@ struct HwApiValidateVisitor
 
     return validateHwApiPositionCmd(node, msg, var_name);
   }
+
+  bool operator()(const rclcpp::Node::SharedPtr &node, const mrs_msgs::msg::HwApiTrajectoryCmd &msg, const ControlOutputModalities_t &output_modalities,
+                  const std::string &var_name) {
+
+    if (!output_modalities.trajectory) {
+      RCLCPP_ERROR(node->get_logger(), "The controller returned an output modality (trajectory cmd) that is not supported by the hardware API");
+      return false;
+    }
+
+    return validateHwApiTrajectoryCmd(node, msg, var_name);
+  }
 };
 
 //}
@@ -257,6 +273,7 @@ void initializeHwApiCmd(const rclcpp::Node::SharedPtr &node, mrs_msgs::msg::HwAp
 void initializeHwApiCmd(const rclcpp::Node::SharedPtr &node, mrs_msgs::msg::HwApiVelocityHdgRateCmd &msg, const mrs_msgs::msg::UavState &uav_state);
 void initializeHwApiCmd(const rclcpp::Node::SharedPtr &node, mrs_msgs::msg::HwApiVelocityHdgCmd &msg, const mrs_msgs::msg::UavState &uav_state);
 void initializeHwApiCmd(const rclcpp::Node::SharedPtr &node, mrs_msgs::msg::HwApiPositionCmd &msg, const mrs_msgs::msg::UavState &uav_state);
+void initializeHwApiCmd(const rclcpp::Node::SharedPtr &node, mrs_msgs::msg::HwApiTrajectoryCmd &msg, const mrs_msgs::msg::UavState &uav_state);
 
 struct HwApiInitializeVisitor
 {
@@ -293,6 +310,10 @@ struct HwApiInitializeVisitor
     initializeHwApiCmd(node, msg, uav_state);
   }
   void operator()(const rclcpp::Node::SharedPtr &node, mrs_msgs::msg::HwApiPositionCmd &msg, const mrs_msgs::msg::UavState &uav_state,
+                  [[maybe_unused]] const double &min_throttle, [[maybe_unused]] const double &n_motors) {
+    initializeHwApiCmd(node, msg, uav_state);
+  }
+  void operator()(const rclcpp::Node::SharedPtr &node, mrs_msgs::msg::HwApiTrajectoryCmd &msg, const mrs_msgs::msg::UavState &uav_state,
                   [[maybe_unused]] const double &min_throttle, [[maybe_unused]] const double &n_motors) {
     initializeHwApiCmd(node, msg, uav_state);
   }

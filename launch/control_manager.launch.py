@@ -271,6 +271,7 @@ def generate_launch_description():
             ("~/hw_api_velocity_hdg_rate_cmd_out", "hw_api/velocity_hdg_rate_cmd"),
             ("~/hw_api_velocity_hdg_cmd_out", "hw_api/velocity_hdg_cmd"),
             ("~/hw_api_position_cmd_out", "hw_api/position_cmd"),
+            ("~/hw_api_trajectory_cmd_out", "hw_api/trajectory_cmd"),
             ("~/control_reference_out", "~/control_reference"),
             ("~/tracker_cmd_out", "~/tracker_cmd"),
             ("~/estimator_input_out", "~/estimator_input"),

@@ -104,6 +104,7 @@ def generate_launch_description():
                   ("~/simulator_velocity_hdg_rate_cmd_out", "/multirotor_simulator/"+uav_name+"/velocity_hdg_rate_cmd"),
                   ("~/simulator_velocity_hdg_cmd_out", "/multirotor_simulator/"+uav_name+"/velocity_hdg_cmd"),
                   ("~/simulator_position_cmd_out", "/multirotor_simulator/"+uav_name+"/position_cmd"),
+                  ("~/simulator_trajectory_cmd_out", "/multirotor_simulator/"+uav_name+"/trajectory_cmd"),
                   ("~/simulator_tracker_cmd_out", "/multirotor_simulator/"+uav_name+"/tracker_cmd"),
                 ],
             )

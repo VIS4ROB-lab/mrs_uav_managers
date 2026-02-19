@@ -62,6 +62,7 @@ struct ControlOutputModalities_t
   bool velocity_hdg_rate     = false;
   bool velocity_hdg          = false;
   bool position              = false;
+  bool trajectory            = false;
 };
 
 struct CommonHandlers_t
