@@ -19,6 +19,7 @@ mrs_uav_managers:
         velocity_hdg_rate:     true
         velocity_hdg:          true
         position:              true
+        trajectory:            true
 
     MpcController:
       address: "mrs_uav_controllers::mpc_controller::MpcController"
@@ -36,6 +37,7 @@ mrs_uav_managers:
         velocity_hdg_rate:     true
         velocity_hdg:          true
         position:              true
+        trajectory:            true
 
     FailsafeController:
       address: "mrs_uav_controllers::failsafe_controller::FailsafeController"
