@@ -853,6 +853,10 @@ CONTROL_OUTPUT getLowestOuput(const ControlOutputModalities_t& outputs) {
     return VELOCITY_HDG;
   }
 
+  if (outputs.trajectory) {
+    return TRAJECTORY;
+  }
+
   return POSITION;
 }
 
@@ -863,6 +867,10 @@ CONTROL_OUTPUT getLowestOuput(const ControlOutputModalities_t& outputs) {
 CONTROL_OUTPUT getHighestOuput(const ControlOutputModalities_t& outputs) {
   if (outputs.position) {
     return POSITION;
+  }
+
+  if (outputs.trajectory) {
+    return TRAJECTORY;
   }
 
   if (outputs.velocity_hdg) {
@@ -1265,8 +1273,8 @@ bool validateHwApiVelocityHdgCmd(const rclcpp::Node::SharedPtr& node,
 /* validateHwApiTrajectoryCmd() //{ */
 
 bool validateHwApiTrajectoryCmd(const rclcpp::Node::SharedPtr& node,
-                              const mrs_msgs::msg::HwApiTrajectoryCmd& msg,
-                              const std::string& var_name) {
+                                const mrs_msgs::msg::HwApiTrajectoryCmd& msg,
+                                const std::string& var_name) {
   // | ----------------- check the position ----------------- |
 
   if (!std::isfinite(msg.position.x)) {
