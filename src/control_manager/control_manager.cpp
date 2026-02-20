@@ -1806,6 +1806,8 @@ void ControlManager::initialize(void) {
                                outputs.velocity_hdg, false);
       param_loader_->loadParam(controller_name + "/outputs/position",
                                outputs.position, false);
+      param_loader_->loadParam(controller_name + "/outputs/trajectory",
+                               outputs.trajectory, false);
 
       bool meets_actuators = (_hw_api_inputs_.actuators && outputs.actuators);
       bool meets_control_group =
@@ -1822,13 +1824,15 @@ void ControlManager::initialize(void) {
           (_hw_api_inputs_.velocity_hdg_rate && outputs.velocity_hdg_rate);
       bool meets_velocity_hdg =
           (_hw_api_inputs_.velocity_hdg && outputs.velocity_hdg);
+      bool meets_trajectory = (_hw_api_inputs_.trajectory && outputs.trajectory);
       bool meets_position = (_hw_api_inputs_.position && outputs.position);
+
 
       bool meets_requirements =
           meets_actuators || meets_control_group || meets_attitude_rate ||
           meets_attitude || meets_acceleration_hdg_rate ||
           meets_acceleration_hdg || meets_velocity_hdg_rate ||
-          meets_velocity_hdg || meets_position;
+          meets_velocity_hdg || meets_position || meets_trajectory;
 
       if (!meets_requirements) {
         RCLCPP_ERROR(node_->get_logger(),
@@ -1870,6 +1874,10 @@ void ControlManager::initialize(void) {
 
         if (_hw_api_inputs_.position) {
           RCLCPP_ERROR(node_->get_logger(), "- position");
+        }
+
+        if (_hw_api_inputs_.trajectory) {
+          RCLCPP_ERROR(node_->get_logger(), "- trajectory");
         }
 
         rclcpp::shutdown();
