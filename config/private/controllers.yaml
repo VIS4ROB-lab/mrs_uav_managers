@@ -55,6 +55,7 @@ mrs_uav_managers:
         velocity_hdg_rate:     true
         velocity_hdg:          true
         position:              true
+        trajectory:            true
 
     EmergencyController:
       address: "mrs_uav_controllers::mpc_controller::MpcController"
@@ -72,7 +73,7 @@ mrs_uav_managers:
         velocity_hdg_rate:     true
         velocity_hdg:          true
         position:              true
-
+        trajectory:            true
 
     MidairActivationController:
       address: "mrs_uav_controllers::midair_activation_controller::MidairActivationController"
@@ -90,3 +91,4 @@ mrs_uav_managers:
         velocity_hdg_rate:     true
         velocity_hdg:          true
         position:              true
+        trajectory:            true
