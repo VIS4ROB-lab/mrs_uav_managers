@@ -151,6 +151,7 @@ class UavManager : public mrs_lib::Node {
   void callbackOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
 
   // service servers
+  mrs_lib::ServiceServerHandler<std_srvs::srv::Trigger> ss_takeoff_apm_;
   mrs_lib::ServiceServerHandler<std_srvs::srv::Trigger> ss_takeoff_;
   mrs_lib::ServiceServerHandler<std_srvs::srv::Trigger> ss_land_;
   mrs_lib::ServiceServerHandler<std_srvs::srv::Trigger> ss_land_home_;
@@ -160,6 +161,9 @@ class UavManager : public mrs_lib::Node {
   mrs_lib::ServiceServerHandler<std_srvs::srv::SetBool> ss_min_height_check_;
 
   // service callbacks
+  bool callbackTakeoffApm(
+      const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+      const std::shared_ptr<std_srvs::srv::Trigger::Response> response);
   bool callbackTakeoff(
       const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
       const std::shared_ptr<std_srvs::srv::Trigger::Response> response);
@@ -176,6 +180,7 @@ class UavManager : public mrs_lib::Node {
           response);
 
   // service clients
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::Vec1> sch_takeoff_apm_;
   mrs_lib::ServiceClientHandler<mrs_msgs::srv::Vec1> sch_takeoff_;
   mrs_lib::ServiceClientHandler<mrs_msgs::srv::String> sch_switch_tracker_;
   mrs_lib::ServiceClientHandler<mrs_msgs::srv::String> sch_switch_controller_;
@@ -193,6 +198,7 @@ class UavManager : public mrs_lib::Node {
   mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger> sch_offboard_;
 
   // service client wrappers
+  bool takeoffApmSrv(void);
   bool takeoffSrv(void);
   bool switchTrackerSrv(const std::string& tracker);
   bool switchControllerSrv(const std::string& controller);
@@ -634,6 +640,11 @@ void UavManager::initialize() {
 
   // | --------------------- service servers -------------------- |
 
+  ss_takeoff_apm_ = mrs_lib::ServiceServerHandler<std_srvs::srv::Trigger>(
+      node_, "~/takeoff_apm_in",
+      std::bind(&UavManager::callbackTakeoffApm, this, std::placeholders::_1,
+                std::placeholders::_2),
+      rclcpp::SystemDefaultsQoS(), cbkgrp_ss_);
   ss_takeoff_ = mrs_lib::ServiceServerHandler<std_srvs::srv::Trigger>(
       node_, "~/takeoff_in",
       std::bind(&UavManager::callbackTakeoff, this, std::placeholders::_1,
@@ -668,6 +679,8 @@ void UavManager::initialize() {
 
   // | --------------------- service clients -------------------- |
 
+  sch_takeoff_apm_ = mrs_lib::ServiceClientHandler<mrs_msgs::srv::Vec1>(
+      node_, "~/takeoff_apm_out", cbkgrp_sc_);
   sch_takeoff_ = mrs_lib::ServiceClientHandler<mrs_msgs::srv::Vec1>(
       node_, "~/takeoff_out", cbkgrp_sc_);
   sch_land_ = mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger>(
@@ -1771,12 +1784,16 @@ bool UavManager::callbackTakeoff(
     }
 
     if (!sh_control_manager_diag_.getMsg()->output_enabled) {
-      ss << "can not takeoff, Control Manager's output is disabled!";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
-      response->message = ss.str();
-      response->success = false;
-      return true;
+      bool output_enabled = toggleControlOutput(true);
+
+      if (!output_enabled) {
+        ss << "can not takeoff, Control Manager's output is disabled!";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+        response->message = ss.str();
+        response->success = false;
+        return true;
+      }
     }
 
     if (number_of_takeoffs_ > 0) {
@@ -2456,6 +2473,192 @@ bool UavManager::callbackMidairActivation(
 
 //}
 
+/* //{ callbackTakeoffApm() */
+
+bool UavManager::callbackTakeoffApm(
+    [[maybe_unused]] const std::shared_ptr<std_srvs::srv::Trigger::Request>
+        request,
+    const std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+  if (!is_initialized_) {
+    return false;
+  }
+
+  RCLCPP_INFO(node_->get_logger(), "take off APM called by service");
+
+  /* preconditions //{ */
+
+  {
+    std::stringstream ss;
+
+    if (!sh_odometry_.hasMsg()) {
+      ss << "can not activate, missing odometry!";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      response->message = ss.str();
+      response->success = false;
+      return true;
+    }
+
+    if (!sh_hw_api_status_.hasMsg() ||
+        (clock_->now() - sh_hw_api_status_.lastMsgTime()).seconds() > 5.0) {
+      ss << "can not activate, missing HW API status!";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      response->message = ss.str();
+      response->success = false;
+      return true;
+    }
+
+    if (!sh_hw_api_status_.getMsg()->armed) {
+      ss << "can not activate, UAV not armed!";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      response->message = ss.str();
+      response->success = false;
+      return true;
+    }
+
+    if (sh_hw_api_status_.getMsg()->offboard) {
+      ss << "can not activate, UAV already in offboard mode!";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      response->message = ss.str();
+      response->success = false;
+      return true;
+    }
+
+    {
+      if (!sh_control_manager_diag_.hasMsg()) {
+        ss << "can not activate, missing control manager diagnostics!";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+        response->message = ss.str();
+        response->success = false;
+        return true;
+      }
+
+      if (_null_tracker_name_ !=
+          sh_control_manager_diag_.getMsg()->active_tracker) {
+        ss << "can not activate, need '" << _null_tracker_name_
+           << "' to be active!";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+        response->message = ss.str();
+        response->success = false;
+        return true;
+      }
+    }
+
+    if (!sh_controller_diagnostics_.hasMsg()) {
+      ss << "can not activate, missing controller diagnostics!";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      response->message = ss.str();
+      response->success = false;
+      return true;
+    }
+
+    if (_gain_manager_required_ &&
+        (clock_->now() - sh_gains_diag_.lastMsgTime()).seconds() > 5.0) {
+      ss << "can not activate, GainManager is not running!";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      response->message = ss.str();
+      response->success = false;
+      return true;
+    }
+
+    if (_constraint_manager_required_ &&
+        (clock_->now() - sh_constraints_diag_.lastMsgTime()).seconds() > 5.0) {
+      ss << "can not activate, ConstraintManager is not running!";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      response->message = ss.str();
+      response->success = false;
+      return true;
+    }
+
+    if (number_of_takeoffs_ > 0) {
+      ss << "can not activate, we flew already!";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      response->message = ss.str();
+      response->success = false;
+      return true;
+    }
+  }
+
+  //}
+
+  // call the APM takeoff service at the takeoff tracker
+  {
+    bool takeoff_successful = takeoffApmSrv();
+
+    // if the takeoff was not successful, switch to NullTracker
+    if (takeoff_successful) {
+      // save the current spot for later landing
+      auto odometry = sh_odometry_.getMsg();
+      auto [odom_x, odom_y, odom_z] =
+          mrs_lib::getPosition(sh_odometry_.getMsg());
+
+      double odom_heading;
+      try {
+        odom_heading = mrs_lib::getHeading(sh_odometry_.getMsg());
+      } catch (mrs_lib::AttitudeConverter::GetHeadingException& e) {
+        RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                              "exception caught: '%s'", e.what());
+
+        std::stringstream ss;
+        ss << "could not calculate current heading";
+        RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                     "" << ss.str());
+        response->message = ss.str();
+        response->success = false;
+        return true;
+      }
+      {
+        std::scoped_lock lock(mutex_land_there_reference_);
+        land_there_reference_.header = sh_odometry_.getMsg()->header;
+        land_there_reference_.reference.position.x = odom_x;
+        land_there_reference_.reference.position.y = odom_y;
+        land_there_reference_.reference.position.z = odom_z;
+        land_there_reference_.reference.heading = odom_heading;
+      }
+
+      timer_flighttime_->start();
+
+      std::stringstream ss;
+      ss << "taking off";
+      response->success = true;
+      response->message = ss.str();
+      RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "" << ss.str());
+
+      takeoff_successful_ = takeoff_successful;
+
+      auto [success, message] = midairActivationImpl();
+
+      response->message = message;
+      response->success = success;
+
+    } else {
+      std::stringstream ss;
+      ss << "takeoff was not successful";
+      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                   "" << ss.str());
+      response->success = false;
+      response->message = ss.str();
+
+      // if the call for takeoff fails, call for emergency landing
+      elandSrv();
+    }
+  }
+
+  return true;
+}
+
+//}
+
 /* //{ callbackMinHeightCheck() */
 
 bool UavManager::callbackMinHeightCheck(
@@ -3053,6 +3256,37 @@ bool UavManager::ehoverSrv(void) {
 
   } else {
     RCLCPP_ERROR(node_->get_logger(), "service call for ehover failed!");
+
+    return false;
+  }
+}
+
+//}
+
+/* takeoffApmSrv() //{ */
+
+bool UavManager::takeoffApmSrv(void) {
+  RCLCPP_INFO(node_->get_logger(), "calling for takeoff to height '%.2f m'",
+              _takeoff_height_);
+
+  std::shared_ptr<mrs_msgs::srv::Vec1::Request> request =
+      std::make_shared<mrs_msgs::srv::Vec1::Request>();
+
+  request->goal = _takeoff_height_;
+
+  auto response = sch_takeoff_apm_.callSync(request);
+
+  if (response) {
+    if (!response.value()->success) {
+      RCLCPP_WARN(node_->get_logger(),
+                  "service call for takeoff returned: '%s'",
+                  response.value()->message.c_str());
+    }
+
+    return response.value()->success;
+
+  } else {
+    RCLCPP_ERROR(node_->get_logger(), "service call for takeoff failed!");
 
     return false;
   }

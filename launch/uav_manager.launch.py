@@ -214,6 +214,7 @@ def generate_launch_description():
             ("~/diagnostics_out", "~/diagnostics"),
             ("~/profiler", "profiler"),
             # services in
+            ("~/takeoff_apm_in", "~/takeoff_apm"),
             ("~/takeoff_in", "~/takeoff"),
             ("~/land_in", "~/land"),
             ("~/land_home_in", "~/land_home"),
@@ -221,6 +222,7 @@ def generate_launch_description():
             ("~/midair_activation_in", "~/midair_activation"),
             ("~/enable_min_height_check_in", "~/enable_min_height_check"),
             # services out
+            ("~/takeoff_apm_out", "hw_api/takeoff"),
             ("~/takeoff_out", "control_manager/landoff_tracker/takeoff"),
             ("~/land_out", "control_manager/landoff_tracker/land"),
             ("~/eland_out", "control_manager/eland"),
