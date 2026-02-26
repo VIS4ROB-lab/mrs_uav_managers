@@ -2577,15 +2577,6 @@ bool UavManager::callbackTakeoffApm(
       response->success = false;
       return true;
     }
-
-    if (number_of_takeoffs_ > 0) {
-      ss << "can not activate, we flew already!";
-      RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                   "" << ss.str());
-      response->message = ss.str();
-      response->success = false;
-      return true;
-    }
   }
 
   //}
@@ -2634,6 +2625,7 @@ bool UavManager::callbackTakeoffApm(
       RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                   "" << ss.str());
 
+      number_of_takeoffs_++;
       takeoff_successful_ = takeoff_successful;
 
       auto [success, message] = midairActivationImpl();
