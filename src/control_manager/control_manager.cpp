@@ -1905,6 +1905,9 @@ void ControlManager::initialize(void) {
     } else if (lowest_output == ATTITUDE_RATE || lowest_output == ATTITUDE) {
       _safety_timer_rate_ = 100.0;
       desired_uav_state_rate_ = 100.0;
+    } else if (lowest_output == TRAJECTORY) {
+      _safety_timer_rate_ = 100.0;
+      desired_uav_state_rate_ = 100.0;
     } else if (lowest_output == ACCELERATION_HDG_RATE ||
                lowest_output == ACCELERATION_HDG) {
       _safety_timer_rate_ = 30.0;
