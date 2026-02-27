@@ -2265,6 +2265,10 @@ bool UavManager::callbackLandHome(
     throttle_mass_estimate_first_time_ =
         rclcpp::Time(0, 0, clock_->get_clock_type());
 
+    velocity_under_threshold_ = false;
+    velocity_under_threshold_first_time_ = 
+        rclcpp::Time(0, 0, clock_->get_clock_type());
+
     changeLandingState(GOTO_STATE);
 
     timer_landing_->start();
@@ -2410,6 +2414,10 @@ bool UavManager::callbackLandThere(
 
     throttle_under_threshold_ = false;
     throttle_mass_estimate_first_time_ =
+        rclcpp::Time(0, 0, clock_->get_clock_type());
+
+    velocity_under_threshold_ = false;
+    velocity_under_threshold_first_time_ = 
         rclcpp::Time(0, 0, clock_->get_clock_type());
 
     changeLandingState(GOTO_STATE);
@@ -2844,6 +2852,10 @@ std::tuple<bool, std::string> UavManager::landImpl(void) {
       throttle_mass_estimate_first_time_ =
           rclcpp::Time(0, 0, clock_->get_clock_type());
 
+      velocity_under_threshold_ = false;
+      velocity_under_threshold_first_time_ = 
+          rclcpp::Time(0, 0, clock_->get_clock_type());
+
       timer_landing_->start();
 
       std::stringstream ss;
@@ -2917,6 +2929,10 @@ std::tuple<bool, std::string> UavManager::landWithDescendImpl(void) {
 
         throttle_under_threshold_ = false;
         throttle_mass_estimate_first_time_ =
+            rclcpp::Time(0, 0, clock_->get_clock_type());
+
+        velocity_under_threshold_ = false;
+        velocity_under_threshold_first_time_ = 
             rclcpp::Time(0, 0, clock_->get_clock_type());
 
         timer_landing_->start();
