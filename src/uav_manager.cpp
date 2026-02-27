@@ -38,6 +38,7 @@
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/u_int8.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 #include <std_srvs/srv/trigger.hpp>
 
@@ -146,6 +147,7 @@ class UavManager : public mrs_lib::Node {
   mrs_lib::SubscriberHandler<sensor_msgs::msg::NavSatFix> sh_hw_api_gnss_;
   mrs_lib::SubscriberHandler<mrs_msgs::msg::Float64Stamped> sh_max_height_;
   mrs_lib::SubscriberHandler<mrs_msgs::msg::TrackerCommand> sh_tracker_cmd_;
+  mrs_lib::SubscriberHandler<std_msgs::msg::UInt8> sh_hw_api_landed_state_;
 
   void callbackHwApiGNSS(const sensor_msgs::msg::NavSatFix::ConstSharedPtr msg);
   void callbackOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
@@ -214,6 +216,7 @@ class UavManager : public mrs_lib::Node {
   bool offboardSrv(const bool in);
 
   std::shared_ptr<TimerType> timer_takeoff_;
+  std::shared_ptr<TimerType> timer_takeoff_apm_;
   std::shared_ptr<TimerType> timer_max_height_;
   std::shared_ptr<TimerType> timer_min_height_;
   std::shared_ptr<TimerType> timer_landing_;
@@ -225,6 +228,7 @@ class UavManager : public mrs_lib::Node {
   // timer callbacks
   void timerLanding();
   void timerTakeoff();
+  void timerTakeoffApm();
   void timerMaxHeight();
   void timerMinHeight();
   void timerFlightTime();
@@ -632,6 +636,8 @@ void UavManager::initialize() {
       shopts, "~/max_height_in");
   sh_tracker_cmd_ = mrs_lib::SubscriberHandler<mrs_msgs::msg::TrackerCommand>(
       shopts, "~/tracker_cmd_in");
+  sh_hw_api_landed_state_ = mrs_lib::SubscriberHandler<std_msgs::msg::UInt8>(
+      shopts, "~/hw_api_landed_state_in");
 
   // | ----------------------- publishers ----------------------- |
 
@@ -747,6 +753,14 @@ void UavManager::initialize() {
         std::bind(&UavManager::timerTakeoff, this);
 
     timer_takeoff_ = std::make_shared<TimerType>(
+        timer_opts_no_start, rclcpp::Rate(_takeoff_timer_rate_), callback_fcn);
+  }
+
+  {
+    std::function<void()> callback_fcn =
+        std::bind(&UavManager::timerTakeoffApm, this);
+
+    timer_takeoff_apm_ = std::make_shared<TimerType>(
         timer_opts_no_start, rclcpp::Rate(_takeoff_timer_rate_), callback_fcn);
   }
 
@@ -1117,6 +1131,74 @@ void UavManager::timerLanding() {
     } else {
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
                            "incorrect tracker detected during landing!");
+    }
+  }
+}
+
+//}
+
+/* //{ timerTakeoffApm() */
+
+void UavManager::timerTakeoffApm() {
+  if (!is_initialized_) {
+    return;
+  }
+
+  mrs_lib::Routine profiler_routine =
+      profiler_.createRoutine("timerTakeoffApm");
+  mrs_lib::ScopeTimer timer =
+      mrs_lib::ScopeTimer(node_, "UavManager::timerTakeoffApm",
+                          scope_timer_logger_, scope_timer_enabled_);
+
+  if (!sh_hw_api_landed_state_.hasMsg()) {
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                         "waiting landed state");
+    return;
+  }
+
+  auto landed_state = sh_hw_api_landed_state_.getMsg()->data;
+
+  if (waiting_for_takeoff_) {
+    if (landed_state == 2) {
+      waiting_for_takeoff_ = false;
+    } else {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
+                           "waiting for takeoff confirmation");
+      return;
+    }
+  }
+
+  if (takingoff_) {
+    if (landed_state == 2) {
+      auto [odom_x, odom_y, odom_z] =
+          mrs_lib::getPosition(sh_odometry_.getMsg());
+
+      double odom_heading;
+      try {
+        odom_heading = mrs_lib::getHeading(sh_odometry_.getMsg());
+      } catch (mrs_lib::AttitudeConverter::GetHeadingException& e) {
+        RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+                              "exception caught: '%s'", e.what());
+        return;
+      }
+      {
+        std::scoped_lock lock(mutex_land_there_reference_);
+        land_there_reference_.header = sh_odometry_.getMsg()->header;
+        land_there_reference_.reference.position.x = odom_x;
+        land_there_reference_.reference.position.y = odom_y;
+        land_there_reference_.reference.position.z = odom_z;
+        land_there_reference_.reference.heading = odom_heading;
+      }
+
+      RCLCPP_INFO(node_->get_logger(),
+                  "take off finished, attempting midair activation");
+
+      timer_takeoff_->stop();
+
+      auto [success, message] = midairActivationImpl();
+
+      RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                  "" << message);
     }
   }
 }
@@ -2625,13 +2707,14 @@ bool UavManager::callbackTakeoffApm(
       RCLCPP_INFO_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                   "" << ss.str());
 
+      takingoff_ = true;
       number_of_takeoffs_++;
+      waiting_for_takeoff_ = true;
+
+      // start the takeoff timer
+      timer_takeoff_apm_->start();
+
       takeoff_successful_ = takeoff_successful;
-
-      auto [success, message] = midairActivationImpl();
-
-      response->message = message;
-      response->success = success;
 
     } else {
       std::stringstream ss;

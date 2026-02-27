@@ -210,6 +210,7 @@ def generate_launch_description():
             ("~/gain_manager_diagnostics_in", "gain_manager/diagnostics"),
             ("~/constraint_manager_diagnostics_in", "constraint_manager/diagnostics"),
             ("~/hw_api_capabilities_in", "hw_api/capabilities"),
+            ("~/hw_api_landed_state_in", "hw_api/landed_state"),
             # publishers
             ("~/diagnostics_out", "~/diagnostics"),
             ("~/profiler", "profiler"),
