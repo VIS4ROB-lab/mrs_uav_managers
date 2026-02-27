@@ -41,9 +41,9 @@
 #include <mrs_msgs/msg/hw_api_capabilities.hpp>
 #include <mrs_msgs/msg/hw_api_control_group_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_position_cmd.hpp>
-#include <mrs_msgs/msg/hw_api_trajectory_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_rc_channels.hpp>
 #include <mrs_msgs/msg/hw_api_status.hpp>
+#include <mrs_msgs/msg/hw_api_trajectory_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_velocity_hdg_cmd.hpp>
 #include <mrs_msgs/msg/hw_api_velocity_hdg_rate_cmd.hpp>
 #include <mrs_msgs/msg/obstacle_sectors.hpp>
@@ -551,6 +551,8 @@ class ControlManager : public mrs_lib::Node {
   std::atomic<bool> offboard_mode_ = false;
   std::atomic<bool> offboard_mode_was_true_ = false;  // if it was ever true
   std::atomic<bool> armed_ = false;
+  std::optional<rclcpp::Time> offboard_mode_drop_since_;
+  bool offboard_mode_drop_handled_ = false;
 
   // | -------------------- throttle and mass ------------------- |
 
@@ -565,6 +567,7 @@ class ControlManager : public mrs_lib::Node {
   bool _tilt_error_disarm_enabled_;
   double _tilt_error_disarm_timeout_;
   double _tilt_error_disarm_threshold_;
+  double _offboard_loss_timeout_ = 0.3;
 
   rclcpp::Time tilt_error_disarm_time_;
   bool tilt_error_disarm_over_thr_ = false;
@@ -1307,6 +1310,14 @@ void ControlManager::initialize(void) {
                            _tilt_error_disarm_timeout_);
   param_loader_->loadParam("safety/tilt_error_disarm/error_threshold",
                            _tilt_error_disarm_threshold_);
+  param_loader_->loadParam("safety/offboard_loss_timeout",
+                           _offboard_loss_timeout_);
+
+  if (_offboard_loss_timeout_ < 0.0) {
+    RCLCPP_WARN(node_->get_logger(),
+                "safety/offboard_loss_timeout is < 0.0, clamping to 0.0 s");
+    _offboard_loss_timeout_ = 0.0;
+  }
 
   _tilt_error_disarm_threshold_ =
       M_PI * (_tilt_error_disarm_threshold_ / 180.0);
@@ -1824,9 +1835,9 @@ void ControlManager::initialize(void) {
           (_hw_api_inputs_.velocity_hdg_rate && outputs.velocity_hdg_rate);
       bool meets_velocity_hdg =
           (_hw_api_inputs_.velocity_hdg && outputs.velocity_hdg);
-      bool meets_trajectory = (_hw_api_inputs_.trajectory && outputs.trajectory);
+      bool meets_trajectory =
+          (_hw_api_inputs_.trajectory && outputs.trajectory);
       bool meets_position = (_hw_api_inputs_.position && outputs.position);
-
 
       bool meets_requirements =
           meets_actuators || meets_control_group || meets_attitude_rate ||
@@ -3499,11 +3510,27 @@ void ControlManager::timerSafety() {
   // active)
   if (offboard_mode_was_true_ && !offboard_mode_ &&
       active_tracker_idx != _null_tracker_idx_) {
-    RCLCPP_ERROR_THROTTLE(
-        node_->get_logger(), *clock_, 1000,
-        "we fell out of OFFBOARD in mid air, disabling output");
+    if (!offboard_mode_drop_since_) {
+      offboard_mode_drop_since_ = clock_->now();
+      offboard_mode_drop_handled_ = false;
+    }
 
-    toggleOutput(false);
+    const double offboard_missing_for =
+        (clock_->now() - offboard_mode_drop_since_.value()).seconds();
+
+    if (!offboard_mode_drop_handled_ &&
+        offboard_missing_for >= _offboard_loss_timeout_) {
+      RCLCPP_ERROR(
+          node_->get_logger(),
+          "we fell out of OFFBOARD in mid air for %.2f s, disabling output",
+          offboard_missing_for);
+
+      toggleOutput(false);
+      offboard_mode_drop_handled_ = true;
+    }
+  } else {
+    offboard_mode_drop_since_.reset();
+    offboard_mode_drop_handled_ = false;
   }
 }  // namespace control_manager
 
