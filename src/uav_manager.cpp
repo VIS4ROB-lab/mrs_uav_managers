@@ -1193,7 +1193,7 @@ void UavManager::timerTakeoffApm() {
       RCLCPP_INFO(node_->get_logger(),
                   "take off finished, attempting midair activation");
 
-      timer_takeoff_->stop();
+      timer_takeoff_apm_->stop();
 
       auto [success, message] = midairActivationImpl();
 
@@ -2259,6 +2259,7 @@ bool UavManager::callbackLandHome(
     waiting_for_takeoff_ = false;
     takingoff_ = false;
     timer_takeoff_->stop();
+    timer_takeoff_apm_->stop();
 
     throttle_under_threshold_ = false;
     throttle_mass_estimate_first_time_ =
@@ -2405,6 +2406,7 @@ bool UavManager::callbackLandThere(
     waiting_for_takeoff_ = false;
     takingoff_ = false;
     timer_takeoff_->stop();
+    timer_takeoff_apm_->stop();
 
     throttle_under_threshold_ = false;
     throttle_mass_estimate_first_time_ =
@@ -2821,6 +2823,7 @@ std::tuple<bool, std::string> UavManager::landImpl(void) {
       waiting_for_takeoff_ = false;
       takingoff_ = false;
       timer_takeoff_->stop();
+      timer_takeoff_apm_->stop();
 
       // stop counting the flight time
       timer_flighttime_->stop();
@@ -2908,6 +2911,7 @@ std::tuple<bool, std::string> UavManager::landWithDescendImpl(void) {
         waiting_for_takeoff_ = false;
         takingoff_ = false;
         timer_takeoff_->stop();
+        timer_takeoff_apm_->stop();
 
         changeLandingState(GOTO_STATE);
 
