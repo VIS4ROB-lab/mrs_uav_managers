@@ -1111,9 +1111,12 @@ void UavManager::timerLanding() {
               rclcpp::Time(0, 0, clock_->get_clock_type());
         }
 
-        if (velocity_under_threshold_ && velocity_was_over_threshold_ &&
-            ((clock_->now() - velocity_under_threshold_first_time_).seconds() >
-             3.0)) {
+        double velocity_under_threshold_time =
+            (clock_->now() - velocity_under_threshold_first_time_).seconds();
+        if ((velocity_under_threshold_ && velocity_was_over_threshold_ &&
+             velocity_under_threshold_time > 3.0) ||
+            (velocity_under_threshold_ &&
+             velocity_under_threshold_time > 15.0)) {
           switchTrackerSrv(_null_tracker_name_);
 
           setControlCallbacksSrv(true);
