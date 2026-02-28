@@ -258,6 +258,7 @@ class UavManager : public mrs_lib::Node {
 
   // velocity during landing
   bool velocity_under_threshold_ = false;
+  bool velocity_was_over_threshold_ = false;
   rclcpp::Time velocity_under_threshold_first_time_;
 
   bool _gain_manager_required_ = false;
@@ -1105,9 +1106,12 @@ void UavManager::timerLanding() {
 
         } else {
           velocity_under_threshold_ = false;
+          velocity_was_over_threshold_ = true;
+          velocity_under_threshold_first_time_ =
+              rclcpp::Time(0, 0, clock_->get_clock_type());
         }
 
-        if (velocity_under_threshold_ &&
+        if (velocity_under_threshold_ && velocity_was_over_threshold_ &&
             ((clock_->now() - velocity_under_threshold_first_time_).seconds() >
              3.0)) {
           switchTrackerSrv(_null_tracker_name_);
@@ -2266,7 +2270,8 @@ bool UavManager::callbackLandHome(
         rclcpp::Time(0, 0, clock_->get_clock_type());
 
     velocity_under_threshold_ = false;
-    velocity_under_threshold_first_time_ = 
+    velocity_was_over_threshold_ = false;
+    velocity_under_threshold_first_time_ =
         rclcpp::Time(0, 0, clock_->get_clock_type());
 
     changeLandingState(GOTO_STATE);
@@ -2417,7 +2422,8 @@ bool UavManager::callbackLandThere(
         rclcpp::Time(0, 0, clock_->get_clock_type());
 
     velocity_under_threshold_ = false;
-    velocity_under_threshold_first_time_ = 
+    velocity_was_over_threshold_ = false;
+    velocity_under_threshold_first_time_ =
         rclcpp::Time(0, 0, clock_->get_clock_type());
 
     changeLandingState(GOTO_STATE);
@@ -2853,7 +2859,8 @@ std::tuple<bool, std::string> UavManager::landImpl(void) {
           rclcpp::Time(0, 0, clock_->get_clock_type());
 
       velocity_under_threshold_ = false;
-      velocity_under_threshold_first_time_ = 
+      velocity_was_over_threshold_ = false;
+      velocity_under_threshold_first_time_ =
           rclcpp::Time(0, 0, clock_->get_clock_type());
 
       timer_landing_->start();
@@ -2932,7 +2939,8 @@ std::tuple<bool, std::string> UavManager::landWithDescendImpl(void) {
             rclcpp::Time(0, 0, clock_->get_clock_type());
 
         velocity_under_threshold_ = false;
-        velocity_under_threshold_first_time_ = 
+        velocity_was_over_threshold_ = false;
+        velocity_under_threshold_first_time_ =
             rclcpp::Time(0, 0, clock_->get_clock_type());
 
         timer_landing_->start();
