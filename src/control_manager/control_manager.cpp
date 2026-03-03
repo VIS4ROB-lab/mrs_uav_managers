@@ -7733,7 +7733,7 @@ bool ControlManager::getClosestPointInSafetyArea3d(
     return false;
   }
   if (response.value()->success) {
-    point.reference = response.value()->reference_out;
+    point.reference.position = response.value()->reference_out.position;
     return true;
   }
   return false;
@@ -7760,7 +7760,7 @@ bool ControlManager::getClosestPointInSafetyArea2d(
     return false;
   }
   if (response.value()->success) {
-    point.reference = response.value()->reference_out;
+    point.reference.position = response.value()->reference_out.position;
     return true;
   }
   return false;
