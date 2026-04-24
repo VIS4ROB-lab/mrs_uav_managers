@@ -2,6 +2,7 @@
 
 #include <control_manager/output_publisher.h>
 #include <mrs_lib/attitude_converter.h>
+#include <mrs_lib/geometry/conversions_eigen.h>
 #include <mrs_lib/geometry/cyclic.h>
 #include <mrs_lib/geometry/misc.h>
 #include <mrs_lib/msg_extractor.h>
@@ -53,6 +54,7 @@
 #include <mrs_msgs/msg/safety_area_manager_diagnostics.hpp>
 #include <mrs_msgs/msg/tracker_command.hpp>
 #include <mrs_msgs/msg/trajectory_reference.hpp>
+#include <mrs_msgs/srv/check_reference_collision_srv.hpp>
 #include <mrs_msgs/srv/float64_stamped_srv.hpp>
 #include <mrs_msgs/srv/get_bool_srv.hpp>
 #include <mrs_msgs/srv/get_closest_point_srv.hpp>
@@ -530,6 +532,8 @@ class ControlManager : public mrs_lib::Node {
       sc_get_closest_point_3d_;
   mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>
       sc_get_closest_point_2d_;
+  mrs_lib::ServiceClientHandler<mrs_msgs::srv::CheckReferenceCollisionSrv>
+      sc_check_reference_collision_;
 
   // safety area min z servers
   mrs_lib::ServiceServerHandler<mrs_msgs::srv::GetFloat64> ss_get_min_z_;
@@ -622,6 +626,7 @@ class ControlManager : public mrs_lib::Node {
                                    const mrs_msgs::msg::ReferenceStamped& to);
   bool getClosestPointInSafetyArea2d(mrs_msgs::msg::ReferenceStamped& point);
   bool getClosestPointInSafetyArea3d(mrs_msgs::msg::ReferenceStamped& point);
+  bool checkReferenceCollision(const mrs_msgs::msg::ReferenceStamped& point);
 
   double getMinZ(const std::string& frame_id);
   double getMaxZ(const std::string& frame_id);
@@ -873,6 +878,8 @@ class ControlManager : public mrs_lib::Node {
   void bumperPushFromObstacle(void);
 
   // | --------------- safety checks and failsafes -------------- |
+
+  std::atomic<bool> collision_check_ = false;
 
   // escalating failsafe (eland -> failsafe -> disarm)
   bool _service_escalating_failsafe_enabled_ = false;
@@ -1435,6 +1442,10 @@ void ControlManager::initialize(void) {
                            _channel_mult_heading_);
   param_loader_->loadParam("joystick/channel_multipliers/throttle",
                            _channel_mult_throttle_);
+
+  bool collision_check;
+  param_loader_->loadParam("collision_check/enabled", collision_check);
+  collision_check_ = collision_check;
 
   bool bumper_enabled;
   param_loader_->loadParam("obstacle_bumper/enabled", bumper_enabled);
@@ -2472,6 +2483,9 @@ void ControlManager::initialize(void) {
   sc_get_closest_point_2d_ =
       mrs_lib::ServiceClientHandler<mrs_msgs::srv::GetClosestPointSrv>(
           node_, "~/get_closest_point_2d_out", cbkgrp_sc_);
+  sc_check_reference_collision_ =
+      mrs_lib::ServiceClientHandler<mrs_msgs::srv::CheckReferenceCollisionSrv>(
+          node_, "~/check_reference_collision_out", cbkgrp_sc_);
 
   // | ---------------- setpoint command services --------------- |
 
@@ -6029,6 +6043,12 @@ bool ControlManager::callbackValidateReference(
     }
   }
 
+  if (!checkReferenceCollision(transformed_reference)) {
+    response->message = "Reference is in collision";
+    response->success = false;
+    return true;
+  }
+
   response->message = "the reference is ok";
   response->success = true;
   return true;
@@ -6109,6 +6129,12 @@ bool ControlManager::callbackValidateReference2d(
         return true;
       }
     }
+  }
+
+  if (!checkReferenceCollision(transformed_reference)) {
+    response->message = "Reference is in collision";
+    response->success = false;
+    return true;
   }
 
   response->message = "the reference is ok";
@@ -6209,6 +6235,11 @@ bool ControlManager::callbackValidateReferenceArray(
           response->success.at(i) = false;
         }
       }
+    }
+
+    if (!checkReferenceCollision(transformed_reference)) {
+      response->success.at(i) = false;
+      return true;
     }
   }
 
@@ -6697,12 +6728,19 @@ std::tuple<bool, std::string> ControlManager::setReference(
                            "Reference point outside safety area, correcting to "
                            "closest valid point");
       if (!getClosestPointInSafetyArea3d(transformed_reference)) {
-        ss << "get closest point in safety area failed 0";
+        ss << "get closest point in safety area failed";
         RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                     "" << ss.str());
         return std::tuple(false, ss.str());
       }
     }
+  }
+
+  if (!checkReferenceCollision(transformed_reference)) {
+    ss << "the reference is in collision";
+    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                "" << ss.str());
+    return std::tuple(false, ss.str());
   }
 
   // prepare the message for current tracker
@@ -6853,23 +6891,23 @@ std::tuple<bool, std::string> ControlManager::setVelocityReference(
   transformed_reference.header.stamp = tf.header.stamp;
   transformed_reference.header.frame_id = transformer_->frame_to(tf);
 
-  mrs_msgs::msg::ReferenceStamped eqivalent_reference =
+  mrs_msgs::msg::ReferenceStamped equivalent_reference =
       velocityReferenceToReference(transformed_reference);
 
   RCLCPP_DEBUG(node_->get_logger(),
                "equivalent reference: %.2f, %.2f, %.2f, %.2f",
-               eqivalent_reference.reference.position.x,
-               eqivalent_reference.reference.position.y,
-               eqivalent_reference.reference.position.z,
-               eqivalent_reference.reference.heading);
+               equivalent_reference.reference.position.x,
+               equivalent_reference.reference.position.y,
+               equivalent_reference.reference.position.z,
+               equivalent_reference.reference.heading);
 
   // safety area check
-  if (!isPointInSafetyArea3d(eqivalent_reference)) {
+  if (!isPointInSafetyArea3d(equivalent_reference)) {
     RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
                          "Reference point outside safety area, correcting to "
                          "closest valid point");
-    if (!getClosestPointInSafetyArea3d(eqivalent_reference)) {
-      ss << "get closest point in safety area failed 0";
+    if (!getClosestPointInSafetyArea3d(equivalent_reference)) {
+      ss << "get closest point in safety area failed";
       RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                   "" << ss.str());
       return std::tuple(false, ss.str());
@@ -6883,17 +6921,24 @@ std::tuple<bool, std::string> ControlManager::setVelocityReference(
     from_point.reference.position.y = last_tracker_cmd->position.y;
     from_point.reference.position.z = last_tracker_cmd->position.z;
 
-    if (!isPathToPointInSafetyArea3d(from_point, eqivalent_reference)) {
+    if (!isPathToPointInSafetyArea3d(from_point, equivalent_reference)) {
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000,
                            "Reference point outside safety area, correcting to "
                            "closest valid point");
-      if (!getClosestPointInSafetyArea3d(eqivalent_reference)) {
-        ss << "get closest point in safety area failed 0";
+      if (!getClosestPointInSafetyArea3d(equivalent_reference)) {
+        ss << "get closest point in safety area failed";
         RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                     "" << ss.str());
         return std::tuple(false, ss.str());
       }
     }
+  }
+
+  if (!checkReferenceCollision(equivalent_reference)) {
+    ss << "Reference is in collision";
+    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                "" << ss.str());
+    return std::tuple(false, ss.str());
   }
 
   // prepare the message for current tracker
@@ -7103,19 +7148,15 @@ ControlManager::setTrajectoryReference(
                               std::vector<std::string>());
           }
         }
-        // trajectory_modified = true;
 
-        // the first invalid point
-        // if (first_invalid_idx == -1) {
-        //   first_invalid_idx = i;
+        if (!checkReferenceCollision(des_reference)) {
+          ss << "Reference is in collision";
+          RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                      "" << ss.str());
+          return std::tuple(false, ss.str(), false, std::vector<std::string>(),
+                            std::vector<bool>(), std::vector<std::string>());
+        }
 
-        //   last_valid_idx = i - 1;
-        // }
-
-        // the point is ok
-        // } else {
-        // we found a point, which is ok, after finding a point which was not
-        // ok
         if (first_invalid_idx != -1) {
           // special case, we had no valid point so far
           if (last_valid_idx == -1) {
@@ -7178,6 +7219,15 @@ ControlManager::setTrajectoryReference(
                   temp_point.reference.position.x;
               processed_trajectory.points.at(j).position.y =
                   temp_point.reference.position.y;
+
+              if (!checkReferenceCollision(temp_point)) {
+                ss << "Reference is in collision";
+                RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+                                            "" << ss.str());
+                return std::tuple(
+                    false, ss.str(), false, std::vector<std::string>(),
+                    std::vector<bool>(), std::vector<std::string>());
+              }
             }
 
             if (!interpolation_success) {
@@ -7670,6 +7720,40 @@ double ControlManager::getMass(void) {
 //}
 
 // | ----------------------- safety area ---------------------- |
+
+/* //{ checkReferenceCollision() */
+
+bool ControlManager::checkReferenceCollision(
+    const mrs_msgs::msg::ReferenceStamped& point) {
+  geometry_msgs::msg::Pose goal;
+
+  if (!collision_check_) return true;
+
+  // Call the safety area manager service to get the closest point
+  std::shared_ptr<mrs_msgs::srv::CheckReferenceCollisionSrv::Request> request =
+      std::make_shared<mrs_msgs::srv::CheckReferenceCollisionSrv::Request>();
+
+  request->header = point.header;
+  request->use_relative_goal = false;
+  request->goal.position.x = point.reference.position.x;
+  request->goal.position.y = point.reference.position.y;
+  request->goal.position.z = point.reference.position.z;
+  request->goal.orientation = mrs_lib::geometry::fromEigen(
+      mrs_lib::geometry::quaternionFromHeading(point.reference.heading));
+
+  auto response = sc_check_reference_collision_.callSync(request);
+  if (!response) {
+    RCLCPP_WARN(node_->get_logger(),
+                "Service call to check reference collision failed");
+    return false;
+  }
+  if (response.value()->success) {
+    return true;
+  }
+  return false;
+}
+
+//}
 
 /* //{ isPointInSafetyArea3d() */
 bool ControlManager::isPointInSafetyArea3d(

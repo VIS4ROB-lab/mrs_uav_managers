@@ -105,9 +105,13 @@ mrs_uav_managers:
 
       snap_to_safety_area: false
 
+    collision_check:
+
+      enabled: false
+
     obstacle_bumper:
 
-      enabled: true
+      enabled: false
 
       switch_tracker: true
       tracker: "MpcTracker"
