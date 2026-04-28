@@ -7748,8 +7748,7 @@ bool ControlManager::checkReferenceCollision(
                 "Service call to check reference collision failed");
     return false;
   }
-  RCLCPP_WARN_STREAM(node_->get_logger(), "Reference collision check response: "
-                                              << response.value()->message);
+  RCLCPP_WARN_STREAM(node_->get_logger(), response.value()->message);
   return response.value()->success;
 }
 
