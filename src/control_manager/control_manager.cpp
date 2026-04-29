@@ -7734,8 +7734,6 @@ bool ControlManager::checkReferenceCollision(
       std::make_shared<mrs_msgs::srv::CheckReferenceCollisionSrv::Request>();
 
   request->header = point.header;
-  request->use_2d_nav_goal = false;
-  request->use_relative_goal = false;
   request->goal.position.x = point.reference.position.x;
   request->goal.position.y = point.reference.position.y;
   request->goal.position.z = point.reference.position.z;
