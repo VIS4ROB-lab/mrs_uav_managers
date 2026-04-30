@@ -294,6 +294,7 @@ def generate_launch_description():
             ("~/trajectory_original/poses_out", "~/trajectory_original/poses"),
             ("~/trajectory_original/markers_out", "~/trajectory_original/markers"),
             ("~/controller_diagnostics_out", "~/controller_diagnostics"),
+            ("~/uav_diagnostics_out", "~/uav_diagnostics"),
             ("~/profiler", "profiler"),
             # services
             ("~/switch_tracker_in", "~/switch_tracker"),

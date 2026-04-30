@@ -54,6 +54,7 @@
 #include <mrs_msgs/msg/safety_area_manager_diagnostics.hpp>
 #include <mrs_msgs/msg/tracker_command.hpp>
 #include <mrs_msgs/msg/trajectory_reference.hpp>
+#include <mrs_msgs/msg/uav_diagnostics.hpp>
 #include <mrs_msgs/srv/check_reference_collision_srv.hpp>
 #include <mrs_msgs/srv/float64_stamped_srv.hpp>
 #include <mrs_msgs/srv/get_bool_srv.hpp>
@@ -408,6 +409,7 @@ class ControlManager : public mrs_lib::Node {
 
   // | ----------------------- publishers ----------------------- |
 
+  mrs_lib::PublisherHandler<mrs_msgs::msg::UavDiagnostics> ph_uav_diagnostics_;
   mrs_lib::PublisherHandler<mrs_msgs::msg::ControllerDiagnostics>
       ph_controller_diagnostics_;
   mrs_lib::PublisherHandler<mrs_msgs::msg::TrackerCommand> ph_tracker_cmd_;
@@ -2154,6 +2156,9 @@ void ControlManager::initialize(void) {
 
   control_output_publisher_ = OutputPublisher(node_);
 
+  ph_uav_diagnostics_ =
+      mrs_lib::PublisherHandler<mrs_msgs::msg::UavDiagnostics>(
+          node_, "~/uav_diagnostics_out");
   ph_controller_diagnostics_ =
       mrs_lib::PublisherHandler<mrs_msgs::msg::ControllerDiagnostics>(
           node_, "~/controller_diagnostics_out");
@@ -6977,12 +6982,17 @@ ControlManager::setTrajectoryReference(
     const mrs_msgs::msg::TrajectoryReference trajectory_in) {
   auto uav_state = mrs_lib::get_mutexed(mutex_uav_state_, uav_state_);
 
+  mrs_msgs::msg::UavDiagnostics uav_msg;
+  uav_msg.stamp = clock_->now();
+
   std::stringstream ss;
 
   if (!callbacks_enabled_) {
     ss << "can not set the reference, the callbacks are disabled";
     RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                 "" << ss.str());
+    uav_msg.state = "trajectory failed - callbacks disabled";
+    ph_uav_diagnostics_.publish(uav_msg);
     return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                       std::vector<bool>(), std::vector<std::string>());
   }
@@ -6994,6 +7004,8 @@ ControlManager::setTrajectoryReference(
     ss << "can not load trajectory with size 0";
     RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                 "" << ss.str());
+    uav_msg.state = "trajectory failed - size 0";
+    ph_uav_diagnostics_.publish(uav_msg);
     return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                       std::vector<bool>(), std::vector<std::string>());
   }
@@ -7008,6 +7020,8 @@ ControlManager::setTrajectoryReference(
       ss << "trajectory contains NaNs/infs.";
       RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                   "" << ss.str());
+      uav_msg.state = "trajectory failed - contains NaNs/infs";
+      ph_uav_diagnostics_.publish(uav_msg);
       return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                         std::vector<bool>(), std::vector<std::string>());
     }
@@ -7143,6 +7157,8 @@ ControlManager::setTrajectoryReference(
             ss << "the trajectory starts outside of the safety area!";
             RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                         "" << ss.str());
+            uav_msg.state = "trajectory failed - outside safety area";
+            ph_uav_diagnostics_.publish(uav_msg);
             return std::tuple(false, ss.str(), false,
                               std::vector<std::string>(), std::vector<bool>(),
                               std::vector<std::string>());
@@ -7210,6 +7226,8 @@ ControlManager::setTrajectoryReference(
                   ss << "the trajectory starts outside of the safety area!";
                   RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_,
                                               1000, "" << ss.str());
+                  uav_msg.state = "trajectory failed - outside safety area";
+                  ph_uav_diagnostics_.publish(uav_msg);
                   return std::tuple(
                       false, ss.str(), false, std::vector<std::string>(),
                       std::vector<bool>(), std::vector<std::string>());
@@ -7246,6 +7264,8 @@ ControlManager::setTrajectoryReference(
             ss << "the whole trajectory is outside of the safety area!";
             RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                         "" << ss.str());
+            uav_msg.state = "trajectory failed - outside safety area";
+            ph_uav_diagnostics_.publish(uav_msg);
             return std::tuple(false, ss.str(), false,
                               std::vector<std::string>(), std::vector<bool>(),
                               std::vector<std::string>());
@@ -7265,6 +7285,8 @@ ControlManager::setTrajectoryReference(
             "message should not appear!";
       RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                   "" << ss.str());
+      uav_msg.state = "trajectory failed - trajectory empty";
+      ph_uav_diagnostics_.publish(uav_msg);
       return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                         std::vector<bool>(), std::vector<std::string>());
     }
@@ -7289,6 +7311,8 @@ ControlManager::setTrajectoryReference(
       ss << "could not create TF transformer for the trajectory";
       RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                   "" << ss.str());
+      uav_msg.state = "trajectory failed - cannot create TF";
+      ph_uav_diagnostics_.publish(uav_msg);
       return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                         std::vector<bool>(), std::vector<std::string>());
     }
@@ -7304,9 +7328,11 @@ ControlManager::setTrajectoryReference(
       auto ret = transformer_->transform(trajectory_point, *tf_traj_state);
 
       if (!ret) {
-        ss << "trajectory cannnot be transformed";
+        ss << "trajectory cannot be transformed";
         RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                     "" << ss.str());
+        uav_msg.state = "trajectory failed - cannot transform";
+        ph_uav_diagnostics_.publish(uav_msg);
         return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                           std::vector<bool>(), std::vector<std::string>());
 
@@ -7327,6 +7353,8 @@ ControlManager::setTrajectoryReference(
             "should not happen!";
       RCLCPP_ERROR_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                    "" << ss.str());
+      uav_msg.state = "trajectory failed - trajectory empty";
+      ph_uav_diagnostics_.publish(uav_msg);
       return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                         std::vector<bool>(), std::vector<std::string>());
     }
@@ -7400,6 +7428,8 @@ ControlManager::setTrajectoryReference(
       }
     }
 
+    uav_msg.state = "trajectory set";
+    ph_uav_diagnostics_.publish(uav_msg);
     return std::tuple(success, message, modified, tracker_names,
                       tracker_successes, tracker_messages);
   } else {
@@ -7407,6 +7437,8 @@ ControlManager::setTrajectoryReference(
           "trajectory";
     RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
                                 "" << ss.str());
+    uav_msg.state = "trajectory failed - safety area check failed";
+    ph_uav_diagnostics_.publish(uav_msg);
     return std::tuple(false, ss.str(), false, std::vector<std::string>(),
                       std::vector<bool>(), std::vector<std::string>());
   }
@@ -7746,7 +7778,15 @@ bool ControlManager::checkReferenceCollision(
                 "Service call to check reference collision failed");
     return false;
   }
-  RCLCPP_WARN_STREAM(node_->get_logger(), response.value()->message);
+  if (!response.value()->success) {
+    RCLCPP_WARN_STREAM(node_->get_logger(), response.value()->message);
+
+    mrs_msgs::msg::UavDiagnostics uav_msg;
+    uav_msg.stamp = clock_->now();
+    uav_msg.state = response.value()->message;
+    ph_uav_diagnostics_.publish(uav_msg);
+  }
+
   return response.value()->success;
 }
 
