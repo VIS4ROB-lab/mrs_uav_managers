@@ -78,6 +78,7 @@ mrs_uav_managers:
       enabled: false
       vertical_check: false
       vertical_distance: 2.0 # [m]
+      vertical_angle: 0.5 # [rad]
 
     obstacle_bumper:
 

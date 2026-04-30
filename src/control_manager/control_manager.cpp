@@ -881,6 +881,7 @@ class ControlManager : public mrs_lib::Node {
   double _bumper_vertical_distance_ = 0;
 
   double _collision_vertical_distance_ = 2.0;
+  double _collision_vertical_angle_ = 0.5;
 
   double _bumper_horizontal_overshoot_ = 0;
   double _bumper_vertical_overshoot_ = 0;
@@ -1465,6 +1466,8 @@ void ControlManager::initialize(void) {
 
   param_loader_->loadParam("collision_check/vertical_distance",
                            _collision_vertical_distance_);
+  param_loader_->loadParam("collision_check/vertical_angle",
+                           _collision_vertical_angle_);
 
   bool bumper_enabled;
   param_loader_->loadParam("obstacle_bumper/enabled", bumper_enabled);
@@ -7853,7 +7856,8 @@ bool ControlManager::checkReferenceCollision(
     float angle = uav_diff_pos.dot(Eigen::Vector3d::UnitZ());
     float range = distance_sensor->range;
 
-    if (range < _collision_vertical_distance_ && angle > 0.5) {
+    if (range < _collision_vertical_distance_ &&
+        angle > _collision_vertical_angle_) {
       RCLCPP_WARN_STREAM(
           node_->get_logger(),
           "Vertical distance to obstacle is too small: " << range << " m");
