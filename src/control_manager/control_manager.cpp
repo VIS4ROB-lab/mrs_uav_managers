@@ -78,6 +78,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joy.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <sensor_msgs/msg/range.hpp>
 #include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include <visualization_msgs/msg/marker.hpp>
@@ -540,6 +541,10 @@ class ControlManager : public mrs_lib::Node {
   // safety area min z servers
   mrs_lib::ServiceServerHandler<mrs_msgs::srv::GetFloat64> ss_get_min_z_;
 
+  // distance sensor subscriber for vertical safety checks
+  mrs_lib::SubscriberHandler<sensor_msgs::msg::Range>
+      sh_hw_api_distance_sensor_;
+
   // | --------- trackers' and controllers' last results -------- |
 
   // the last result of an active tracker
@@ -642,6 +647,8 @@ class ControlManager : public mrs_lib::Node {
       const mrs_msgs::msg::HwApiStatus::ConstSharedPtr msg);
   void callbackGNSS(const sensor_msgs::msg::NavSatFix::ConstSharedPtr msg);
   void callbackRC(const mrs_msgs::msg::HwApiRcChannels::ConstSharedPtr msg);
+  void callbackHwApiDistanceSensor(
+      const sensor_msgs::msg::Range::ConstSharedPtr msg);
 
   // topic timeouts
   void timeoutUavState(const double& missing_for);
@@ -873,6 +880,8 @@ class ControlManager : public mrs_lib::Node {
   double _bumper_horizontal_distance_ = 0;
   double _bumper_vertical_distance_ = 0;
 
+  double _collision_vertical_distance_ = 2.0;
+
   double _bumper_horizontal_overshoot_ = 0;
   double _bumper_vertical_overshoot_ = 0;
 
@@ -882,6 +891,7 @@ class ControlManager : public mrs_lib::Node {
   // | --------------- safety checks and failsafes -------------- |
 
   std::atomic<bool> collision_check_ = false;
+  std::atomic<bool> vert_dist_check_ = false;
 
   // escalating failsafe (eland -> failsafe -> disarm)
   bool _service_escalating_failsafe_enabled_ = false;
@@ -1448,6 +1458,13 @@ void ControlManager::initialize(void) {
   bool collision_check;
   param_loader_->loadParam("collision_check/enabled", collision_check);
   collision_check_ = collision_check;
+
+  bool vert_dist_check;
+  param_loader_->loadParam("collision_check/vertical_check", vert_dist_check);
+  vert_dist_check_ = vert_dist_check;
+
+  param_loader_->loadParam("collision_check/vertical_distance",
+                           _collision_vertical_distance_);
 
   bool bumper_enabled;
   param_loader_->loadParam("obstacle_bumper/enabled", bumper_enabled);
@@ -2293,9 +2310,12 @@ void ControlManager::initialize(void) {
       shopts, "~/gnss_in", &ControlManager::callbackGNSS, this);
   sh_hw_api_rc_ = mrs_lib::SubscriberHandler<mrs_msgs::msg::HwApiRcChannels>(
       shopts, "~/hw_api_rc_in", &ControlManager::callbackRC, this);
-
   sh_hw_api_status_ = mrs_lib::SubscriberHandler<mrs_msgs::msg::HwApiStatus>(
       shopts, "~/hw_api_status_in", &ControlManager::callbackHwApiStatus, this);
+  sh_hw_api_distance_sensor_ =
+      mrs_lib::SubscriberHandler<sensor_msgs::msg::Range>(
+          shopts, "~/hw_api_distance_sensor_in",
+          &ControlManager::callbackHwApiDistanceSensor, this);
 
   // | -------------------- general services -------------------- |
 
@@ -4813,6 +4833,25 @@ void ControlManager::callbackHwApiStatus(
       RCLCPP_INFO(node_->get_logger(), "detected: vehicle DISARMED");
     }
   }
+}
+
+//}
+
+/* //{ callbackHwApiDistanceSensor() */
+
+void ControlManager::callbackHwApiDistanceSensor(
+    const sensor_msgs::msg::Range::ConstSharedPtr msg) {
+  if (!is_initialized_) {
+    return;
+  }
+
+  mrs_lib::Routine profiler_routine =
+      profiler_.createRoutine("callbackHwApiDistanceSensor");
+  mrs_lib::ScopeTimer timer =
+      mrs_lib::ScopeTimer(node_, "ControlManager::callbackHwApiDistanceSensor",
+                          scope_timer_logger_, scope_timer_enabled_);
+
+  sensor_msgs::msg::Range::ConstSharedPtr range = msg;
 }
 
 //}
@@ -7785,6 +7824,32 @@ bool ControlManager::checkReferenceCollision(
     uav_msg.stamp = clock_->now();
     uav_msg.state = response.value()->message;
     ph_uav_diagnostics_.publish(uav_msg);
+  }
+
+  if (vert_dist_check_ && sh_hw_api_distance_sensor_.hasMsg()) {
+    Eigen::Vector3d uav_ref_pos, uav_cur_pos, uav_diff_pos;
+    auto distance_sensor = sh_hw_api_distance_sensor_.getMsg();
+
+    uav_ref_pos = mrs_lib::geometry::toEigen(point.reference.position);
+    uav_cur_pos = mrs_lib::geometry::toEigen(
+        mrs_lib::get_mutexed(mutex_uav_state_, uav_state_).pose.position);
+    uav_diff_pos = (uav_ref_pos - uav_cur_pos).normalized();
+
+    float angle = uav_diff_pos.dot(Eigen::Vector3d::UnitZ());
+    float range = distance_sensor->range;
+
+    if (range < _collision_vertical_distance_ && angle > 0.5) {
+      RCLCPP_WARN_STREAM(
+          node_->get_logger(),
+          "Vertical distance to obstacle is too small: " << range << " m");
+
+      mrs_msgs::msg::UavDiagnostics uav_msg;
+      uav_msg.stamp = clock_->now();
+      uav_msg.state = "Vertical distance to obstacle is too small";
+      ph_uav_diagnostics_.publish(uav_msg);
+
+      return false;
+    }
   }
 
   return response.value()->success;

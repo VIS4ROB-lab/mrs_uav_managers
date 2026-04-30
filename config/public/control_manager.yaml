@@ -108,6 +108,8 @@ mrs_uav_managers:
     collision_check:
 
       enabled: false
+      vertical_check: false
+      vertical_distance: 2.0 # [m] if the vertical distance to an obstacle is smaller than this, the collision check will trigger
 
     obstacle_bumper:
 

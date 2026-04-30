@@ -76,6 +76,8 @@ mrs_uav_managers:
     collision_check:
 
       enabled: false
+      vertical_check: false
+      vertical_distance: 2.0 # [m]
 
     obstacle_bumper:
 

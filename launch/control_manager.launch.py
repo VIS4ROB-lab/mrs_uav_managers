@@ -244,6 +244,7 @@ def generate_launch_description():
             ("~/joystick_in", "joy"),
             ("~/bumper_sectors_in", "bumper/obstacle_sectors"),
             ("~/hw_api_rc_in", "hw_api/rc_channels"),
+            ("~/hw_api_distance_sensor_in", "hw_api/distance_sensor"),
             ("~/reference_in", "~/reference"),
             ("~/velocity_reference_in", "~/velocity_reference"),
             ("~/trajectory_reference_in", "~/trajectory_reference"),
