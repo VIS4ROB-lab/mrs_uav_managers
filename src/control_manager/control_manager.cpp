@@ -5761,6 +5761,11 @@ bool ControlManager::callbackStartTrajectoryTracking(
   response->success = success;
   response->message = message;
 
+  mrs_msgs::msg::UavDiagnostics uav_msg;
+  uav_msg.stamp = clock_->now();
+  uav_msg.state = message;
+  ph_uav_diagnostics_.publish(uav_msg);
+
   return true;
 }
 
@@ -5781,6 +5786,11 @@ bool ControlManager::callbackStopTrajectoryTracking(
   response->success = success;
   response->message = message;
 
+  mrs_msgs::msg::UavDiagnostics uav_msg;
+  uav_msg.stamp = clock_->now();
+  uav_msg.state = message;
+  ph_uav_diagnostics_.publish(uav_msg);
+
   return true;
 }
 
@@ -5800,6 +5810,11 @@ bool ControlManager::callbackResumeTrajectoryTracking(
 
   response->success = success;
   response->message = message;
+
+  mrs_msgs::msg::UavDiagnostics uav_msg;
+  uav_msg.stamp = clock_->now();
+  uav_msg.state = message;
+  ph_uav_diagnostics_.publish(uav_msg);
 
   return true;
 }
