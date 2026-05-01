@@ -232,6 +232,7 @@ class ControlManager : public mrs_lib::Node {
 
   std::atomic<bool> is_initialized_ = false;
   std::string _uav_name_;
+  std::string _uav_fcu_;
   std::string _body_frame_;
 
   std::string _uav_dynamics_config_;
@@ -323,7 +324,6 @@ class ControlManager : public mrs_lib::Node {
 
   // joystick control
   bool _joystick_enabled_ = false;
-  int _joystick_mode_;
   std::string _joystick_tracker_name_;
   std::string _joystick_controller_name_;
   std::string _joystick_fallback_tracker_name_;
@@ -513,6 +513,9 @@ class ControlManager : public mrs_lib::Node {
   // service clients
   mrs_lib::ServiceClientHandler<std_srvs::srv::SetBool> sch_arming_;
   mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger> sch_eland_;
+  mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger> sch_land_;
+  mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger> sch_takeoff_;
+  mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger> sch_takeoff_apm_;
   mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger> sch_shutdown_;
   mrs_lib::ServiceClientHandler<std_srvs::srv::SetBool>
       sch_set_odometry_callbacks_;
@@ -973,18 +976,8 @@ class ControlManager : public mrs_lib::Node {
 
   double _joystick_carrot_distance_ = 0;
 
-  rclcpp::Time joystick_start_press_time_;
-  bool joystick_start_pressed_ = false;
-
-  rclcpp::Time joystick_back_press_time_;
-  bool joystick_back_pressed_ = false;
-  bool joystick_goto_enabled_ = false;
-
-  bool joystick_failsafe_pressed_ = false;
-  rclcpp::Time joystick_failsafe_press_time_;
-
-  bool joystick_eland_pressed_ = false;
-  rclcpp::Time joystick_eland_press_time_;
+  std::vector<bool> joystick_buttons_pressed_;
+  std::vector<rclcpp::Time> joystick_buttons_pressed_time_;
 
   // | ------------------- RC joystick control ------------------ |
 
@@ -1057,6 +1050,9 @@ class ControlManager : public mrs_lib::Node {
   void setCallbacks(bool in);
   bool isOffboard(void);
   bool elandSrv(void);
+  bool landSrv(void);
+  bool takeoffSrv(void);
+  bool takeoffApmSrv(void);
   std::tuple<bool, std::string> arming(const bool input);
 
   // safety functions impl
@@ -1115,9 +1111,6 @@ ControlManager::ControlManager(rclcpp::NodeOptions options)
 void ControlManager::initialize(void) {
   rclcpp::on_shutdown([this]() { this->shutdown(); });
 
-  joystick_start_press_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
-  joystick_failsafe_press_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
-  joystick_eland_press_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
   escalating_failsafe_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
   controller_tracker_switch_time_ =
       rclcpp::Time(0, 0, clock_->get_clock_type());
@@ -1206,6 +1199,7 @@ void ControlManager::initialize(void) {
 
   // params passed from the launch file are not prefixed
   param_loader_->loadParam("uav_name", _uav_name_);
+  param_loader_->loadParam("uav_fcu", _uav_fcu_);
   param_loader_->loadParam("body_frame", _body_frame_);
   param_loader_->loadParam("enable_profiler", _profiler_enabled_);
   param_loader_->loadParam("uav_mass", _uav_mass_);
@@ -1415,7 +1409,6 @@ void ControlManager::initialize(void) {
   // joystick
 
   param_loader_->loadParam("joystick/enabled", _joystick_enabled_);
-  param_loader_->loadParam("joystick/mode", _joystick_mode_);
   param_loader_->loadParam("joystick/carrot_distance",
                            _joystick_carrot_distance_);
   param_loader_->loadParam("joystick/joystick_timer_rate",
@@ -2475,6 +2468,12 @@ void ControlManager::initialize(void) {
       node_, "~/hw_api_arming_out", cbkgrp_sc_);
   sch_eland_ = mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger>(
       node_, "~/eland_out", cbkgrp_sc_);
+  sch_land_ = mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger>(
+      node_, "~/land_out", cbkgrp_sc_);
+  sch_takeoff_ = mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger>(
+      node_, "~/takeoff_out", cbkgrp_sc_);
+  sch_takeoff_apm_ = mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger>(
+      node_, "~/takeoff_apm_out", cbkgrp_sc_);
   sch_shutdown_ = mrs_lib::ServiceClientHandler<std_srvs::srv::Trigger>(
       node_, "~/shutdown_out", cbkgrp_sc_);
   sch_set_odometry_callbacks_ =
@@ -3787,7 +3786,8 @@ void ControlManager::timerFailsafe() {
 /* //{ timerJoystick() */
 
 void ControlManager::timerJoystick() {
-  if (!is_initialized_) {
+  if (!is_initialized_ || joystick_buttons_pressed_.empty() ||
+      joystick_buttons_pressed_time_.empty()) {
     return;
   }
 
@@ -3799,241 +3799,231 @@ void ControlManager::timerJoystick() {
   auto last_tracker_cmd =
       mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
 
-  // if start was pressed and held for > 3.0 s
-  if (joystick_start_pressed_ && joystick_start_press_time_.seconds() != 0 &&
-      (clock_->now() - joystick_start_press_time_).seconds() > 3.0) {
-    joystick_start_press_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
+  if (joystick_buttons_pressed_.at(_channel_Y_) &&
+      joystick_buttons_pressed_time_.at(_channel_Y_).seconds() != 0 &&
+      (clock_->now() - joystick_buttons_pressed_time_.at(_channel_Y_))
+              .seconds() > 1.0) {
+    RCLCPP_INFO(node_->get_logger(), "arming by joystick");
 
-    RCLCPP_INFO(node_->get_logger(),
-                "transitioning to joystick control: activating '%s' and '%s'",
-                _joystick_tracker_name_.c_str(),
-                _joystick_controller_name_.c_str());
+    mrs_msgs::msg::UavDiagnostics uav_msg;
+    uav_msg.stamp = clock_->now();
+    uav_msg.state = "arming by joystick";
+    ph_uav_diagnostics_.publish(uav_msg);
 
-    joystick_start_pressed_ = false;
+    arming(true);
 
-    switchTracker(_joystick_tracker_name_);
-    switchController(_joystick_controller_name_);
-  }
-
-  // if RT+LT were pressed and held for > 0.1 s
-  if (joystick_failsafe_pressed_ &&
-      joystick_failsafe_press_time_.seconds() != 0 &&
-      (clock_->now() - joystick_failsafe_press_time_).seconds() > 0.1) {
-    joystick_failsafe_press_time_ =
+    joystick_buttons_pressed_.at(_channel_Y_) = false;
+    joystick_buttons_pressed_time_.at(_channel_Y_) =
         rclcpp::Time(0, 0, clock_->get_clock_type());
-
-    RCLCPP_INFO(node_->get_logger(), "activating failsafe by joystick");
-
-    joystick_failsafe_pressed_ = false;
-
-    failsafe();
+    return;
   }
 
-  // if joypads were pressed and held for > 0.1 s
-  if (joystick_eland_pressed_ && joystick_eland_press_time_.seconds() != 0 &&
-      (clock_->now() - joystick_eland_press_time_).seconds() > 0.1) {
-    joystick_eland_press_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
+  if (joystick_buttons_pressed_.at(_channel_A_) &&
+      joystick_buttons_pressed_time_.at(_channel_A_).seconds() != 0 &&
+      (clock_->now() - joystick_buttons_pressed_time_.at(_channel_A_))
+              .seconds() > 1.0) {
+    RCLCPP_INFO(node_->get_logger(), "disarming by joystick");
 
-    RCLCPP_INFO(node_->get_logger(), "activating eland by joystick");
+    mrs_msgs::msg::UavDiagnostics uav_msg;
+    uav_msg.stamp = clock_->now();
+    uav_msg.state = "disarming by joystick";
+    ph_uav_diagnostics_.publish(uav_msg);
 
-    joystick_failsafe_pressed_ = false;
+    arming(false);
 
-    eland();
+    joystick_buttons_pressed_.at(_channel_A_) = false;
+    joystick_buttons_pressed_time_.at(_channel_A_) =
+        rclcpp::Time(0, 0, clock_->get_clock_type());
+    return;
   }
 
-  // if back was pressed and held for > 0.1 s
-  if (joystick_back_pressed_ && joystick_back_press_time_.seconds() != 0 &&
-      (clock_->now() - joystick_back_press_time_).seconds() > 0.1) {
-    joystick_back_press_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
+  if (joystick_buttons_pressed_.at(_channel_X_) &&
+      joystick_buttons_pressed_time_.at(_channel_X_).seconds() != 0 &&
+      (clock_->now() - joystick_buttons_pressed_time_.at(_channel_X_))
+              .seconds() > 1.0) {
+    RCLCPP_INFO(node_->get_logger(), "takeoff by joystick");
 
-    // activate/deactivate the joystick goto functionality
-    joystick_goto_enabled_ = !joystick_goto_enabled_;
+    mrs_msgs::msg::UavDiagnostics uav_msg;
+    uav_msg.stamp = clock_->now();
+    uav_msg.state = "takeoff by joystick";
+    ph_uav_diagnostics_.publish(uav_msg);
 
-    RCLCPP_INFO(node_->get_logger(), "joystick control %s",
-                joystick_goto_enabled_ ? "activated" : "deactivated");
+    if (_uav_fcu_ == "apm") {
+      takeoffApmSrv();
+    } else {
+      takeoffSrv();
+    }
+
+    joystick_buttons_pressed_.at(_channel_X_) = false;
+    joystick_buttons_pressed_time_.at(_channel_X_) =
+        rclcpp::Time(0, 0, clock_->get_clock_type());
+    return;
   }
 
-  // if the GOTO functionality is enabled...
-  if (joystick_goto_enabled_ && sh_joystick_.hasMsg()) {
+  if (joystick_buttons_pressed_.at(_channel_B_) &&
+      joystick_buttons_pressed_time_.at(_channel_B_).seconds() != 0 &&
+      (clock_->now() - joystick_buttons_pressed_time_.at(_channel_B_))
+              .seconds() > 1.0) {
+    RCLCPP_INFO(node_->get_logger(), "landing by joystick");
+
+    mrs_msgs::msg::UavDiagnostics uav_msg;
+    uav_msg.stamp = clock_->now();
+    uav_msg.state = "landing by joystick";
+    ph_uav_diagnostics_.publish(uav_msg);
+
+    landSrv();
+
+    joystick_buttons_pressed_.at(_channel_B_) = false;
+    joystick_buttons_pressed_time_.at(_channel_B_) =
+        rclcpp::Time(0, 0, clock_->get_clock_type());
+    return;
+  }
+
+  if (sh_joystick_.hasMsg()) {
     auto joystick_data = sh_joystick_.getMsg();
 
     // create the reference
 
-    std::shared_ptr<mrs_msgs::srv::Vec4::Request> request =
-        std::make_shared<mrs_msgs::srv::Vec4::Request>();
+    float heading = 0;
+    Eigen::Vector3f goal = Eigen::Vector3f::Zero();
 
-    if (fabs(joystick_data->axes.at(_channel_pitch_)) >= 0.05 ||
-        fabs(joystick_data->axes.at(_channel_roll_)) >= 0.05 ||
-        fabs(joystick_data->axes.at(_channel_heading_)) >= 0.05 ||
-        fabs(joystick_data->axes.at(_channel_throttle_)) >= 0.05) {
-      if (_joystick_mode_ == 0) {
-        request->goal.at(REF_X) = _channel_mult_pitch_ *
-                                  joystick_data->axes.at(_channel_pitch_) *
-                                  _joystick_carrot_distance_;
-        request->goal.at(REF_Y) = _channel_mult_roll_ *
-                                  joystick_data->axes.at(_channel_roll_) *
-                                  _joystick_carrot_distance_;
-        request->goal.at(REF_Z) = _channel_mult_throttle_ *
-                                  joystick_data->axes.at(_channel_throttle_);
-        request->goal.at(REF_HEADING) =
-            _channel_mult_heading_ * joystick_data->axes.at(_channel_heading_);
+    goal.x() = _channel_mult_pitch_ * joystick_data->axes.at(_channel_pitch_) *
+               _joystick_carrot_distance_;
+    goal.y() = _channel_mult_roll_ * joystick_data->axes.at(_channel_roll_) *
+               _joystick_carrot_distance_;
+    goal.z() =
+        _channel_mult_throttle_ * joystick_data->axes.at(_channel_throttle_);
+    heading =
+        _channel_mult_heading_ * joystick_data->axes.at(_channel_heading_);
 
-        std::shared_ptr<mrs_msgs::srv::Vec4::Response> response =
-            std::make_shared<mrs_msgs::srv::Vec4::Response>();
+    if (goal.norm() > 0.1 || fabs(heading) > 0.1) {
+      std::shared_ptr<mrs_msgs::srv::Vec4::Request> request =
+          std::make_shared<mrs_msgs::srv::Vec4::Request>();
 
-        callbackGotoFcu(request, response);
+      request->goal.at(REF_X) = goal.x();
+      request->goal.at(REF_Y) = goal.y();
+      request->goal.at(REF_Z) = goal.z();
+      request->goal.at(REF_HEADING) = heading;
 
-      } else if (_joystick_mode_ == 1) {
-        mrs_msgs::msg::TrajectoryReference trajectory;
+      std::shared_ptr<mrs_msgs::srv::Vec4::Response> response =
+          std::make_shared<mrs_msgs::srv::Vec4::Response>();
 
-        double dt = 0.2;
-
-        trajectory.fly_now = true;
-        trajectory.header.frame_id = "fcu_untilted";
-        trajectory.use_heading = true;
-        trajectory.dt = dt;
-
-        mrs_msgs::msg::Reference point;
-        point.position.x = 0;
-        point.position.y = 0;
-        point.position.z = 0;
-        point.heading = 0;
-
-        trajectory.points.push_back(point);
-
-        double speed = 1.0;
-
-        for (int i = 0; i < 50; i++) {
-          point.position.x += _channel_mult_pitch_ *
-                              joystick_data->axes.at(_channel_pitch_) *
-                              (speed * dt);
-          point.position.y += _channel_mult_roll_ *
-                              joystick_data->axes.at(_channel_roll_) *
-                              (speed * dt);
-          point.position.z += _channel_mult_throttle_ *
-                              joystick_data->axes.at(_channel_throttle_) *
-                              (speed * dt);
-          point.heading = _channel_mult_heading_ *
-                          joystick_data->axes.at(_channel_heading_);
-
-          trajectory.points.push_back(point);
-        }
-
-        setTrajectoryReference(trajectory);
-      }
+      callbackGotoFcu(request, response);
     }
   }
 
-  if (rc_goto_active_ && !bumper_repulsing_ && last_tracker_cmd &&
-      sh_hw_api_rc_.hasMsg()) {
-    // create the reference
-    std::shared_ptr<mrs_msgs::srv::VelocityReferenceStampedSrv::Request>
-        request = std::make_shared<
-            mrs_msgs::srv::VelocityReferenceStampedSrv::Request>();
+  // if (rc_goto_active_ && !bumper_repulsing_ && last_tracker_cmd &&
+  //     sh_hw_api_rc_.hasMsg()) {
+  //   // create the reference
+  //   std::shared_ptr<mrs_msgs::srv::VelocityReferenceStampedSrv::Request>
+  //       request = std::make_shared<
+  //           mrs_msgs::srv::VelocityReferenceStampedSrv::Request>();
 
-    double des_x = 0;
-    double des_y = 0;
-    double des_z = 0;
-    double des_heading = 0;
+  //   double des_x = 0;
+  //   double des_y = 0;
+  //   double des_z = 0;
+  //   double des_heading = 0;
 
-    bool nothing_to_do = true;
+  //   bool nothing_to_do = true;
 
-    // copy member variables
-    mrs_msgs::msg::HwApiRcChannels::ConstSharedPtr rc_channels =
-        sh_hw_api_rc_.getMsg();
+  //   // copy member variables
+  //   mrs_msgs::msg::HwApiRcChannels::ConstSharedPtr rc_channels =
+  //       sh_hw_api_rc_.getMsg();
 
-    if (rc_channels->channels.size() < 4) {
-      RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
-                            "RC control channel numbers are out of range (the "
-                            "# of channels in rc/in topic is %d)",
-                            int(rc_channels->channels.size()));
-      RCLCPP_ERROR_THROTTLE(
-          node_->get_logger(), *clock_, 1000,
-          "tip: this could be caused by the RC failsafe not being configured!");
+  //   if (rc_channels->channels.size() < 4) {
+  //     RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000,
+  //                           "RC control channel numbers are out of range (the
+  //                           "
+  //                           "# of channels in rc/in topic is %d)",
+  //                           int(rc_channels->channels.size()));
+  //     RCLCPP_ERROR_THROTTLE(
+  //         node_->get_logger(), *clock_, 1000,
+  //         "tip: this could be caused by the RC failsafe not being
+  //         configured!");
 
-    } else {
-      double tmp_x =
-          RCChannelToRange(rc_channels->channels.at(_rc_channel_pitch_),
-                           _rc_horizontal_speed_, 0.1);
-      double tmp_y =
-          -RCChannelToRange(rc_channels->channels.at(_rc_channel_roll_),
-                            _rc_horizontal_speed_, 0.1);
-      double tmp_z =
-          RCChannelToRange(rc_channels->channels.at(_rc_channel_throttle_),
-                           _rc_vertical_speed_, 0.3);
-      double tmp_heading =
-          -RCChannelToRange(rc_channels->channels.at(_rc_channel_heading_),
-                            _rc_heading_rate_, 0.1);
+  //   } else {
+  //     double tmp_x =
+  //         RCChannelToRange(rc_channels->channels.at(_rc_channel_pitch_),
+  //                          _rc_horizontal_speed_, 0.1);
+  //     double tmp_y =
+  //         -RCChannelToRange(rc_channels->channels.at(_rc_channel_roll_),
+  //                           _rc_horizontal_speed_, 0.1);
+  //     double tmp_z =
+  //         RCChannelToRange(rc_channels->channels.at(_rc_channel_throttle_),
+  //                          _rc_vertical_speed_, 0.3);
+  //     double tmp_heading =
+  //         -RCChannelToRange(rc_channels->channels.at(_rc_channel_heading_),
+  //                           _rc_heading_rate_, 0.1);
 
-      if (abs(tmp_x) > 1e-3) {
-        des_x = tmp_x;
-        nothing_to_do = false;
-      }
+  //     if (abs(tmp_x) > 1e-3) {
+  //       des_x = tmp_x;
+  //       nothing_to_do = false;
+  //     }
 
-      if (abs(tmp_y) > 1e-3) {
-        des_y = tmp_y;
-        nothing_to_do = false;
-      }
+  //     if (abs(tmp_y) > 1e-3) {
+  //       des_y = tmp_y;
+  //       nothing_to_do = false;
+  //     }
 
-      if (abs(tmp_z) > 1e-3) {
-        des_z = tmp_z;
-        nothing_to_do = false;
-      }
+  //     if (abs(tmp_z) > 1e-3) {
+  //       des_z = tmp_z;
+  //       nothing_to_do = false;
+  //     }
 
-      if (abs(tmp_heading) > 1e-3) {
-        des_heading = tmp_heading;
-        nothing_to_do = false;
-      }
-    }
+  //     if (abs(tmp_heading) > 1e-3) {
+  //       des_heading = tmp_heading;
+  //       nothing_to_do = false;
+  //     }
+  //   }
 
-    if (!nothing_to_do) {
-      request->reference.header.frame_id = "fcu_untilted";
+  //   if (!nothing_to_do) {
+  //     request->reference.header.frame_id = "fcu_untilted";
 
-      request->reference.reference.use_heading_rate = true;
+  //     request->reference.reference.use_heading_rate = true;
 
-      request->reference.reference.velocity.x = des_x;
-      request->reference.reference.velocity.y = des_y;
-      request->reference.reference.velocity.z = des_z;
-      request->reference.reference.heading_rate = des_heading;
+  //     request->reference.reference.velocity.x = des_x;
+  //     request->reference.reference.velocity.y = des_y;
+  //     request->reference.reference.velocity.z = des_z;
+  //     request->reference.reference.heading_rate = des_heading;
 
-      std::shared_ptr<mrs_msgs::srv::VelocityReferenceStampedSrv::Response>
-          response = std::make_shared<
-              mrs_msgs::srv::VelocityReferenceStampedSrv::Response>();
+  //     std::shared_ptr<mrs_msgs::srv::VelocityReferenceStampedSrv::Response>
+  //         response = std::make_shared<
+  //             mrs_msgs::srv::VelocityReferenceStampedSrv::Response>();
 
-      // disable callbacks of all trackers
-      std::shared_ptr<std_srvs::srv::SetBool::Request> req_enable_callbacks =
-          std::make_shared<std_srvs::srv::SetBool::Request>();
+  //     // disable callbacks of all trackers
+  //     std::shared_ptr<std_srvs::srv::SetBool::Request> req_enable_callbacks =
+  //         std::make_shared<std_srvs::srv::SetBool::Request>();
 
-      // enable the callbacks for the active tracker
-      req_enable_callbacks->data = true;
-      {
-        std::scoped_lock lock(mutex_tracker_list_);
+  //     // enable the callbacks for the active tracker
+  //     req_enable_callbacks->data = true;
+  //     {
+  //       std::scoped_lock lock(mutex_tracker_list_);
 
-        tracker_list_.at(active_tracker_idx_)
-            ->enableCallbacks(req_enable_callbacks);
-      }
+  //       tracker_list_.at(active_tracker_idx_)
+  //           ->enableCallbacks(req_enable_callbacks);
+  //     }
 
-      callbacks_enabled_ = true;
+  //     callbacks_enabled_ = true;
 
-      callbackVelocityReferenceService(request, response);
+  //     callbackVelocityReferenceService(request, response);
 
-      callbacks_enabled_ = false;
+  //     callbacks_enabled_ = false;
 
-      RCLCPP_INFO_THROTTLE(
-          node_->get_logger(), *clock_, 1000,
-          "goto by RC with speed x=%.2f, y=%.2f, z=%.2f, heading_rate=%.2f",
-          des_x, des_y, des_z, des_heading);
+  //     RCLCPP_INFO_THROTTLE(
+  //         node_->get_logger(), *clock_, 1000,
+  //         "goto by RC with speed x=%.2f, y=%.2f, z=%.2f, heading_rate=%.2f",
+  //         des_x, des_y, des_z, des_heading);
 
-      // disable the callbacks back again
-      req_enable_callbacks->data = false;
-      {
-        std::scoped_lock lock(mutex_tracker_list_);
+  //     // disable the callbacks back again
+  //     req_enable_callbacks->data = false;
+  //     {
+  //       std::scoped_lock lock(mutex_tracker_list_);
 
-        tracker_list_.at(active_tracker_idx_)
-            ->enableCallbacks(req_enable_callbacks);
-      }
-    }
-  }
+  //       tracker_list_.at(active_tracker_idx_)
+  //           ->enableCallbacks(req_enable_callbacks);
+  //     }
+  //   }
+  // }
 }
 
 //}
@@ -4693,100 +4683,31 @@ void ControlManager::callbackJoystick(
   sensor_msgs::msg::Joy::ConstSharedPtr joystick_data = msg;
 
   // TODO check if the array is smaller than the largest idx
-  if (joystick_data->buttons.size() == 0 || joystick_data->axes.size() == 0) {
+  if (joystick_data->buttons.size() < joystick_buttons_pressed_.size()) {
     return;
   }
 
-  // | ---- switching back to fallback tracker and controller --- |
+  joystick_buttons_pressed_.resize(joystick_data->buttons.size(), false);
+  joystick_buttons_pressed_time_.resize(
+      joystick_data->buttons.size(),
+      rclcpp::Time(0, 0, clock_->get_clock_type()));
 
-  // if any of the A, B, X, Y buttons are pressed when flying with joystick,
-  // switch back to fallback controller and tracker
-  if ((joystick_data->buttons.at(_channel_A_) == 1 ||
-       joystick_data->buttons.at(_channel_B_) == 1 ||
-       joystick_data->buttons.at(_channel_X_) == 1 ||
-       joystick_data->buttons.at(_channel_Y_) == 1) &&
-      active_tracker_idx == _joystick_tracker_idx_ &&
-      active_controller_idx == _joystick_controller_idx_) {
-    RCLCPP_INFO(node_->get_logger(),
-                "switching from joystick to normal control");
+  for (int i = 0; i < joystick_data->buttons.size(); i++) {
+    if (joystick_data->buttons.at(i) == 1) {
+      if (!joystick_buttons_pressed_.at(i)) {
+        RCLCPP_INFO(node_->get_logger(), "joystick button %d pressed", i);
 
-    switchTracker(_joystick_fallback_tracker_name_);
-    switchController(_joystick_fallback_controller_name_);
+        joystick_buttons_pressed_.at(i) = true;
+        joystick_buttons_pressed_time_.at(i) = clock_->now();
+      }
 
-    joystick_goto_enabled_ = false;
-  }
+    } else if (joystick_buttons_pressed_.at(i)) {
+      RCLCPP_INFO(node_->get_logger(), "joystick button %d released", i);
 
-  // | ------- joystick control activation ------- |
-
-  // if start button was pressed
-  if (joystick_data->buttons.at(_channel_start_) == 1) {
-    if (!joystick_start_pressed_) {
-      RCLCPP_INFO(node_->get_logger(), "joystick start button pressed");
-
-      joystick_start_pressed_ = true;
-      joystick_start_press_time_ = clock_->now();
+      joystick_buttons_pressed_.at(i) = false;
+      joystick_buttons_pressed_time_.at(i) =
+          rclcpp::Time(0, 0, clock_->get_clock_type());
     }
-
-  } else if (joystick_start_pressed_) {
-    RCLCPP_INFO(node_->get_logger(), "joystick start button released");
-
-    joystick_start_pressed_ = false;
-    joystick_start_press_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
-  }
-
-  // | ---------------- Joystick goto activation ---------------- |
-
-  // if back button was pressed
-  if (joystick_data->buttons.at(_channel_back_) == 1) {
-    if (!joystick_back_pressed_) {
-      RCLCPP_INFO(node_->get_logger(), "joystick back button pressed");
-
-      joystick_back_pressed_ = true;
-      joystick_back_press_time_ = clock_->now();
-    }
-
-  } else if (joystick_back_pressed_) {
-    RCLCPP_INFO(node_->get_logger(), "joystick back button released");
-
-    joystick_back_pressed_ = false;
-    joystick_back_press_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
-  }
-
-  // | ------------------------ Failsafes ----------------------- |
-
-  // if LT and RT buttons are both pressed down
-  if (joystick_data->axes.at(_channel_LT_) < -0.99 &&
-      joystick_data->axes.at(_channel_RT_) < -0.99) {
-    if (!joystick_failsafe_pressed_) {
-      RCLCPP_INFO(node_->get_logger(), "joystick Failsafe pressed");
-
-      joystick_failsafe_pressed_ = true;
-      joystick_failsafe_press_time_ = clock_->now();
-    }
-
-  } else if (joystick_failsafe_pressed_) {
-    RCLCPP_INFO(node_->get_logger(), "joystick Failsafe released");
-
-    joystick_failsafe_pressed_ = false;
-    joystick_failsafe_press_time_ =
-        rclcpp::Time(0, 0, clock_->get_clock_type());
-  }
-
-  // if left and right joypads are both pressed down
-  if (joystick_data->buttons.at(_channel_L_joy_) == 1 &&
-      joystick_data->buttons.at(_channel_R_joy_) == 1) {
-    if (!joystick_eland_pressed_) {
-      RCLCPP_INFO(node_->get_logger(), "joystick eland pressed");
-
-      joystick_eland_pressed_ = true;
-      joystick_eland_press_time_ = clock_->now();
-    }
-
-  } else if (joystick_eland_pressed_) {
-    RCLCPP_INFO(node_->get_logger(), "joystick eland released");
-
-    joystick_eland_pressed_ = false;
-    joystick_eland_press_time_ = rclcpp::Time(0, 0, clock_->get_clock_type());
   }
 }
 
@@ -9140,14 +9061,6 @@ std::tuple<bool, std::string> ControlManager::gotoTrajectoryStart(void) {
 std::tuple<bool, std::string> ControlManager::arming(const bool input) {
   std::stringstream ss;
 
-  if (input) {
-    ss << "not allowed to arm using the ControlManager, maybe later when we "
-          "don't do bugs";
-    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
-
   if (!input && !isOffboard()) {
     ss << "can not disarm, not in OFFBOARD mode";
     RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
@@ -9232,6 +9145,89 @@ void ControlManager::odometryCallbacksSrv(const bool input) {
   } else {
     RCLCPP_ERROR(node_->get_logger(),
                  "service call for toggle odometry callbacks failed!");
+  }
+}
+
+//}
+
+/* takeoffApmSrv() //{ */
+
+bool ControlManager::takeoffApmSrv(void) {
+  RCLCPP_INFO(node_->get_logger(), "calling for takeoff (APM)");
+
+  std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+      std::make_shared<std_srvs::srv::Trigger::Request>();
+
+  auto response = sch_takeoff_apm_.callSync(request);
+
+  if (response) {
+    if (!response.value()->success) {
+      RCLCPP_WARN(node_->get_logger(),
+                  "service call for takeoff (APM) returned: '%s'",
+                  response.value()->message.c_str());
+    }
+
+    return response.value()->success;
+
+  } else {
+    RCLCPP_ERROR(node_->get_logger(), "service call for takeoff (APM) failed!");
+
+    return false;
+  }
+}
+
+//}
+
+/* takeoffSrv() //{ */
+
+bool ControlManager::takeoffSrv(void) {
+  RCLCPP_INFO(node_->get_logger(), "calling for takeoff");
+
+  std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+      std::make_shared<std_srvs::srv::Trigger::Request>();
+
+  auto response = sch_takeoff_.callSync(request);
+
+  if (response) {
+    if (!response.value()->success) {
+      RCLCPP_WARN(node_->get_logger(),
+                  "service call for takeoff returned: '%s'",
+                  response.value()->message.c_str());
+    }
+
+    return response.value()->success;
+
+  } else {
+    RCLCPP_ERROR(node_->get_logger(), "service call for takeoff failed!");
+
+    return false;
+  }
+}
+
+//}
+
+/* landSrv() //{ */
+
+bool ControlManager::landSrv(void) {
+  RCLCPP_INFO(node_->get_logger(), "calling for land");
+
+  std::shared_ptr<std_srvs::srv::Trigger::Request> request =
+      std::make_shared<std_srvs::srv::Trigger::Request>();
+
+  auto response = sch_land_.callSync(request);
+
+  if (response) {
+    if (!response.value()->success) {
+      RCLCPP_WARN(node_->get_logger(), "service call for land returned: '%s'",
+                  response.value()->message.c_str());
+    }
+
+    return response.value()->success;
+
+  } else {
+    RCLCPP_ERROR(node_->get_logger(), "service call for land failed!");
+
+    return false;
   }
 }
 

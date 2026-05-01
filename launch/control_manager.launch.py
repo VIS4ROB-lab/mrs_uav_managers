@@ -189,6 +189,16 @@ def generate_launch_description():
         description="Nominal UAV MASS.",
     ))
 
+    # #{ uav_fcu
+
+    uav_fcu = LaunchConfiguration('uav_fcu')
+
+    ld.add_action(DeclareLaunchArgument(
+        'uav_fcu',
+        default_value=os.getenv('UAV_FCU', "px4"),
+        description="UAV FCU type.",
+    ))
+
     # #} end of custom_config
 
     # #{ log_level
@@ -209,6 +219,7 @@ def generate_launch_description():
         parameters=[
             {"uav_name": uav_name},
             {"uav_mass": uav_mass},
+            {"uav_fcu": uav_fcu},
             {"topic_prefix": ["/", uav_name]},
             {"use_sim_time": use_sim_time},
             {"enable_profiler": False},
@@ -319,7 +330,9 @@ def generate_launch_description():
             ("~/failsafe_in", "~/failsafe"),
             ("~/failsafe_escalating_in", "~/failsafe_escalating"),
             ("~/eland_out", "~/landoff_tracker/eland"),
-            ("~/land_out", "~/landoff_tracker/land"),
+            ("~/land_out", "uav_manager/land"),
+            ("~/takeoff_out", "uav_manager/takeoff"),
+            ("~/takeoff_apm_out", "uav_manager/takeoff_apm"),
             ("~/pirouette_in", "~/pirouette"),
             ("~/bumper_in", "~/bumper"),
             ("~/bumper_repulsion_in", "~/bumper_repulsion"),
