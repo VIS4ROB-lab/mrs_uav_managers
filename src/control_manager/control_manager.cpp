@@ -2169,9 +2169,17 @@ void ControlManager::initialize(void) {
 
   control_output_publisher_ = OutputPublisher(node_);
 
-  ph_uav_diagnostics_ =
-      mrs_lib::PublisherHandler<mrs_msgs::msg::UavDiagnostics>(
-          node_, "~/uav_diagnostics_out");
+  {
+    mrs_lib::PublisherHandlerOptions opts;
+
+    opts.node = node_;
+    opts.throttle_rate = 1.0;
+
+    ph_uav_diagnostics_ =
+        mrs_lib::PublisherHandler<mrs_msgs::msg::UavDiagnostics>(
+            opts, "~/uav_diagnostics_out");
+  }
+
   ph_controller_diagnostics_ =
       mrs_lib::PublisherHandler<mrs_msgs::msg::ControllerDiagnostics>(
           node_, "~/controller_diagnostics_out");
