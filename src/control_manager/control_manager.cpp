@@ -9082,18 +9082,18 @@ std::tuple<bool, std::string> ControlManager::gotoTrajectoryStart(void) {
 std::tuple<bool, std::string> ControlManager::arming(const bool input) {
   std::stringstream ss;
 
-  if (!input && !isOffboard()) {
-    ss << "can not disarm, not in OFFBOARD mode";
-    RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
-                                "" << ss.str());
-    return std::tuple(false, ss.str());
-  }
+  // if (!input && !isOffboard()) {
+  //   ss << "can not disarm, not in OFFBOARD mode";
+  //   RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *clock_, 1000,
+  //                               "" << ss.str());
+  //   return std::tuple(false, ss.str());
+  // }
 
-  if (!input && _rc_emergency_handoff_) {
-    toggleOutput(false);
+  // if (!input && _rc_emergency_handoff_) {
+  //   toggleOutput(false);
 
-    return std::tuple(true, "RC emergency handoff is ON, disabling output");
-  }
+  //   return std::tuple(true, "RC emergency handoff is ON, disabling output");
+  // }
 
   std::shared_ptr<std_srvs::srv::SetBool::Request> request =
       std::make_shared<std_srvs::srv::SetBool::Request>();
