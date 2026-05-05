@@ -978,6 +978,7 @@ class ControlManager : public mrs_lib::Node {
 
   std::vector<bool> joystick_buttons_pressed_;
   std::vector<rclcpp::Time> joystick_buttons_pressed_time_;
+  rclcpp::Time joystick_last_button_action_time_;
 
   // | ------------------- RC joystick control ------------------ |
 
@@ -3807,7 +3808,12 @@ void ControlManager::timerJoystick() {
   auto last_tracker_cmd =
       mrs_lib::get_mutexed(mutex_last_tracker_cmd_, last_tracker_cmd_);
 
-  if (joystick_buttons_pressed_.at(_channel_Y_) &&
+  const bool button_action_cooldown_elapsed =
+      joystick_last_button_action_time_.seconds() == 0 ||
+      (clock_->now() - joystick_last_button_action_time_).seconds() > 3.0;
+
+  if (button_action_cooldown_elapsed &&
+      joystick_buttons_pressed_.at(_channel_Y_) &&
       joystick_buttons_pressed_time_.at(_channel_Y_).seconds() != 0 &&
       (clock_->now() - joystick_buttons_pressed_time_.at(_channel_Y_))
               .seconds() > 1.0) {
@@ -3820,13 +3826,15 @@ void ControlManager::timerJoystick() {
 
     arming(true);
 
+    joystick_last_button_action_time_ = clock_->now();
     joystick_buttons_pressed_.at(_channel_Y_) = false;
     joystick_buttons_pressed_time_.at(_channel_Y_) =
         rclcpp::Time(0, 0, clock_->get_clock_type());
     return;
   }
 
-  if (joystick_buttons_pressed_.at(_channel_A_) &&
+  if (button_action_cooldown_elapsed &&
+      joystick_buttons_pressed_.at(_channel_A_) &&
       joystick_buttons_pressed_time_.at(_channel_A_).seconds() != 0 &&
       (clock_->now() - joystick_buttons_pressed_time_.at(_channel_A_))
               .seconds() > 1.0) {
@@ -3839,13 +3847,15 @@ void ControlManager::timerJoystick() {
 
     arming(false);
 
+    joystick_last_button_action_time_ = clock_->now();
     joystick_buttons_pressed_.at(_channel_A_) = false;
     joystick_buttons_pressed_time_.at(_channel_A_) =
         rclcpp::Time(0, 0, clock_->get_clock_type());
     return;
   }
 
-  if (joystick_buttons_pressed_.at(_channel_X_) &&
+  if (button_action_cooldown_elapsed &&
+      joystick_buttons_pressed_.at(_channel_X_) &&
       joystick_buttons_pressed_time_.at(_channel_X_).seconds() != 0 &&
       (clock_->now() - joystick_buttons_pressed_time_.at(_channel_X_))
               .seconds() > 1.0) {
@@ -3862,13 +3872,15 @@ void ControlManager::timerJoystick() {
       takeoffSrv();
     }
 
+    joystick_last_button_action_time_ = clock_->now();
     joystick_buttons_pressed_.at(_channel_X_) = false;
     joystick_buttons_pressed_time_.at(_channel_X_) =
         rclcpp::Time(0, 0, clock_->get_clock_type());
     return;
   }
 
-  if (joystick_buttons_pressed_.at(_channel_B_) &&
+  if (button_action_cooldown_elapsed &&
+      joystick_buttons_pressed_.at(_channel_B_) &&
       joystick_buttons_pressed_time_.at(_channel_B_).seconds() != 0 &&
       (clock_->now() - joystick_buttons_pressed_time_.at(_channel_B_))
               .seconds() > 1.0) {
@@ -3881,6 +3893,7 @@ void ControlManager::timerJoystick() {
 
     landSrv();
 
+    joystick_last_button_action_time_ = clock_->now();
     joystick_buttons_pressed_.at(_channel_B_) = false;
     joystick_buttons_pressed_time_.at(_channel_B_) =
         rclcpp::Time(0, 0, clock_->get_clock_type());
