@@ -897,6 +897,10 @@ class ControlManager : public mrs_lib::Node {
   std::atomic<bool> collision_check_ = false;
   std::atomic<bool> vert_dist_check_ = false;
 
+  rclcpp::Time collision_diag_last_pub_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time vert_dist_diag_last_pub_{0, 0, RCL_ROS_TIME};
+  static constexpr double collision_diag_throttle_s_ = 1.0;
+
   // escalating failsafe (eland -> failsafe -> disarm)
   bool _service_escalating_failsafe_enabled_ = false;
   bool _rc_escalating_failsafe_enabled_ = false;
@@ -2170,17 +2174,9 @@ void ControlManager::initialize(void) {
 
   control_output_publisher_ = OutputPublisher(node_);
 
-  {
-    mrs_lib::PublisherHandlerOptions opts;
-
-    opts.node = node_;
-    opts.throttle_rate = 1.0;
-
-    ph_uav_diagnostics_ =
-        mrs_lib::PublisherHandler<mrs_msgs::msg::UavDiagnostics>(
-            opts, "~/uav_diagnostics_out");
-  }
-
+  ph_uav_diagnostics_ =
+      mrs_lib::PublisherHandler<mrs_msgs::msg::UavDiagnostics>(
+          node_, "~/uav_diagnostics_out");
   ph_controller_diagnostics_ =
       mrs_lib::PublisherHandler<mrs_msgs::msg::ControllerDiagnostics>(
           node_, "~/controller_diagnostics_out");
@@ -7780,10 +7776,15 @@ bool ControlManager::checkReferenceCollision(
   if (!response.value()->success) {
     RCLCPP_WARN_STREAM(node_->get_logger(), response.value()->message);
 
-    mrs_msgs::msg::UavDiagnostics uav_msg;
-    uav_msg.stamp = clock_->now();
-    uav_msg.state = response.value()->message;
-    ph_uav_diagnostics_.publish(uav_msg);
+    const auto now = clock_->now();
+    if ((now - collision_diag_last_pub_).seconds() >=
+        collision_diag_throttle_s_) {
+      collision_diag_last_pub_ = now;
+      mrs_msgs::msg::UavDiagnostics uav_msg;
+      uav_msg.stamp = now;
+      uav_msg.state = response.value()->message;
+      ph_uav_diagnostics_.publish(uav_msg);
+    }
   }
 
   if (vert_dist_check_ && sh_hw_api_distance_sensor_.hasMsg()) {
@@ -7804,10 +7805,15 @@ bool ControlManager::checkReferenceCollision(
           node_->get_logger(),
           "Vertical distance to obstacle is too small: " << range << " m");
 
-      mrs_msgs::msg::UavDiagnostics uav_msg;
-      uav_msg.stamp = clock_->now();
-      uav_msg.state = "Vertical distance to obstacle is too small";
-      ph_uav_diagnostics_.publish(uav_msg);
+      const auto now = clock_->now();
+      if ((now - vert_dist_diag_last_pub_).seconds() >=
+          collision_diag_throttle_s_) {
+        vert_dist_diag_last_pub_ = now;
+        mrs_msgs::msg::UavDiagnostics uav_msg;
+        uav_msg.stamp = now;
+        uav_msg.state = "Vertical distance to obstacle is too small";
+        ph_uav_diagnostics_.publish(uav_msg);
+      }
 
       return false;
     }
