@@ -1,8 +1,12 @@
 cmake_minimum_required(VERSION 3.22)
-project(mrs_uav_managers)
 
 # Ensure GLOB_RECURSE does not follow symlinks by default
-cmake_policy(SET CMP0009 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0009 NEW)
+if(POLICY CMP0009)
+  cmake_policy(SET CMP0009 NEW)
+endif()
+
+project(mrs_uav_managers)
 
 # set the correct standards
 set(CMAKE_C_STANDARD 99)
